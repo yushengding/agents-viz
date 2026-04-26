@@ -3,7 +3,32 @@
 > VS Code 面板，把多个 Claude Code session 可视化成"项目房间里的像素小人"。
 > 一眼看到谁在干啥、卡在哪、烧了多少钱。
 
-![preview](screenshots/preview.png)
+```
+┌─ Agents Viz panel (top-down floor plan view) ────────────────────────┐
+│ 📅 Apr 25 Sat · 💰 $24.50 · 1.2M tok · 👥 8 sessions · ⚡ 3 live    │
+│ ▶ 📊 Activity heatmap     7 days × 24 hours                          │
+│ ▶ 💸 Top costly prompts   most expensive turns across all sessions   │
+├──────────────────────────────────────────────────────────────────────┤
+│ ┌─ stickerfort_clean ──────────┐  ┌─ trading ────────────────────┐   │
+│ │ 🔲 ~/Desktop/proj/sticker..  │  │ 🔲 ~/Desktop/proj/trading    │   │
+│ │ 💰 $1.45 · 2 sess            │  │ 💰 $0.96 · 2 sess            │   │
+│ │  🌿       🌿                 │  │  🌿  $0.78 ⚡    🛏 💤 🌿   │   │
+│ │   $0.03  $1.42⚡             │  │      🧍                      │   │
+│ │    🧍    🧍                  │  │       🪑                     │   │
+│ │     🪑    🪑                 │  │                              │   │
+│ └──────────────────────────────┘  └──────────────────────────────┘   │
+│ ┌─ agents-viz ─────────────────┐  ┌─ 📁 projects ────────────────┐   │
+│ │ 💰 $0.21 · 1 sess            │  │ 4 workspace-root sessions    │   │
+│ │  🌿  $0.21    🌿             │  │  🛏💤  🛏💤  🧍  🛏💤        │   │
+│ │      🧍                      │  │  $5.20 $3.10  $0.42  $2.30   │   │
+│ │       🪑                     │  │                              │   │
+│ └──────────────────────────────┘  └──────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────┘
+       🧍 = 工作中     🪑 = 桌椅     🛏💤 = 蛋舱睡眠     ⚡ = 跑工具
+```
+
+老版的预览截图（不反映当前 UI）：`screenshots/preview_v5_tasks.png`（仅 sidebar + timeline）。
+当前 UI 的实际截图待补 — 装上后建议自己截一张提到这里。
 
 ---
 
@@ -132,6 +157,76 @@ session 数据通过扫描 `~/.claude/projects/*/<sid>.jsonl` 自动加载（带
 | 改了 webview.html 没生效 | webview 还是旧 panel | 关闭 panel 再 `Open Panel`（HTML 是每次重读的，不用 reload window） |
 | 改了 extension.ts 没生效 | extension.js 没重编 / VS Code 没重载 | `npm run compile` + `Developer: Reload Window` |
 | 角色出现位置怪 / 一半在房外 | 公式 `CHAR_BOX` 不够（sub-pixel 舍入） | 调 webview.html 里的 CHAR_BOX 常量（默认 88，留 buffer 防 wrap） |
+
+---
+
+## 示例
+
+### Hook event 长这样（forwarder 收到的 JSON，会 POST 给 extension）
+
+```json
+{
+  "session_id": "0375b3da-52bf-4fc2-91a8-1325d0b79f39",
+  "transcript_path": "C:\\Users\\X\\.claude\\projects\\hash\\sid.jsonl",
+  "cwd": "C:\\Users\\X\\Desktop\\projects\\stickerfort_clean",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_input": { "file_path": "C:\\...\\stickerfort\\scripts\\fusion_ui.gd" }
+}
+```
+
+### 项目分类投票示例
+
+一个 session 在 workspace 根目录开（cwd 一直 = `~/Desktop/projects`），
+但用绝对路径编辑了 5 个 `idle_alchemist/*.gd` 和 3 个 `agents-viz/*.ts`：
+
+| 信号 | 项目 | 权重 | 累计票 |
+|------|------|------|--------|
+| Edit × 5 | idle_alchemist | 5 each | 25 |
+| Edit × 3 | agents-viz | 5 each | 15 |
+| cwd × 200 events | (workspace root) | 0.2 | 不计票 (`'~'` 跳过) |
+
+**结果**：runner-up (15) / leader (25) = 60% ≥ 30% → `__cross__` → 落 📁 projects hub。
+
+如果只编辑 idle_alchemist（5 × 5 = 25, 没 agents-viz）→ 单一项目主导 → 落 idle_alchemist 房间。
+
+### 房间尺寸示例
+
+5 个 awake + 0 pod 的项目：
+- workCols = round(√(5×2.0)) = round(3.16) = 3
+- workRows = ceil(5/3) = 2
+- workInner = 3×88 + 2×18 = 300px
+- workBoxW = 300 + 36 (slot pad) = 336px
+- roomW = 12 + 336 + 12 = **360px**
+- workH = 2×70 + 14 = 154px
+- roomH = 110 (wall) + 154 + 28 (floor pad) = **292px**
+- 比例 360 × 292 → 横向，2 行 3 列布局 ✓
+
+### 生成独立 preview HTML（无 VS Code 也能看 UI）
+
+```bash
+cd ~/Desktop/projects/agents-viz
+PREVIEW_SELECTED=eeee5555 node scripts/export_webview_preview.js
+# → screenshots/preview.html
+
+# 然后用浏览器打开（注意 file:// 不行，需要 HTTP）
+cd screenshots && python -m http.server 8765 &
+# 浏览器打开 http://localhost:8765/preview.html
+```
+
+会用 5 个假 session（busy 中、waiting、idle、10min stale、2 day stale 各一）
+渲染出整个 panel，方便调样式。
+
+### 自定义房间墙纸
+
+```bash
+# 把项目专属背景图放在 media/rooms/<lowercase-project-name>.png
+cp my_room_bg.png extension/media/rooms/stickerfort_clean.png
+
+# webview.html 会自动 base64 嵌入并设为该房间背景
+```
+
+文件名小写，匹配 projectName 输出。没匹配到 → 用 hash(project) 出的 hsl 渐变。
 
 ---
 
