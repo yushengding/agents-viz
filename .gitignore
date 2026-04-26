@@ -37,3 +37,4 @@ Thumbs.db
 # But keep important things
 !extension/media/
 !extension/webview/
+!screenshots/preview.png

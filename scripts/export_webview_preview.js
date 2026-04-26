@@ -14,10 +14,10 @@ if (!fs.existsSync(WEBVIEW_HTML)) {
     process.exit(1);
 }
 let html = fs.readFileSync(WEBVIEW_HTML, 'utf8');
-html = html.replace('__BUILD_STAMP__', new Date().toTimeString().slice(0, 8));
-html = html.replace('__ROOM_IMAGES__', '{}');
-html = html.replace('__SOFA_FRONT__', '');
-html = html.replace('__SOFA_SIDE__', '');
+html = html.replace(/__BUILD_STAMP__/g, new Date().toTimeString().slice(0, 8));
+html = html.replace(/__ROOM_IMAGES__/g, '{}');
+html = html.replace(/__SOFA_FRONT__/g, '');
+html = html.replace(/__SOFA_SIDE__/g, '');
 
 // For preview, embed sprite images as base64 data URIs so Chrome can show them without localResourceRoots
 const sprites = [];
@@ -30,18 +30,19 @@ for (let i = 0; i < 6; i++) {
         sprites.push('');
     }
 }
-html = html.replace('__SPRITE_URIS__', JSON.stringify(sprites));
-html = html.replace('__SESSION_USAGE__', JSON.stringify({
+html = html.replace(/__SPRITE_URIS__/g, JSON.stringify(sprites));
+html = html.replace(/__SESSION_USAGE__/g, JSON.stringify({
     aaaa1111: { input: 12000, output: 4000, cacheCreate: 8000, cacheRead: 100000, cost: 1.42, models: ['claude-opus-4-7'], msgCount: 38 },
     bbbb2222: { input: 8000, output: 3500, cacheCreate: 4000, cacheRead: 60000, cost: 0.78, models: ['claude-opus-4-7'], msgCount: 22 },
     cccc3333: { input: 5000, output: 1500, cacheCreate: 2000, cacheRead: 25000, cost: 0.21, models: ['claude-opus-4-7'], msgCount: 9 },
     dddd4444: { input: 800, output: 200, cacheCreate: 0, cacheRead: 0, cost: 0.03, models: [], msgCount: 1 },
     eeee5555: { input: 1500, output: 600, cacheCreate: 1000, cacheRead: 12000, cost: 0.18, models: [], msgCount: 4 },
 }));
-html = html.replace('__PROMPT_COSTS__', JSON.stringify([
-    { sessionId: 'aaaa1111', promptText: 'tweak fusion UI legibility on mobile', promptTs: now - 1000, cost: 0.42, tokens: 18000, cwd: 'C:/Users/redacted/Desktop/projects/stickerfort_clean' },
-    { sessionId: 'bbbb2222', promptText: 'backtest VIX>30 entry with SPXL', promptTs: now - 2000, cost: 0.31, tokens: 12000, cwd: 'C:/Users/redacted/Desktop/projects/trading' },
-    { sessionId: 'cccc3333', promptText: 'add pixel character avatars to the sidebar', promptTs: now - 3000, cost: 0.08, tokens: 4000, cwd: 'C:/Users/redacted/Desktop/projects/agents-viz' },
+const _previewNow = Date.now();
+html = html.replace(/__PROMPT_COSTS__/g, JSON.stringify([
+    { sessionId: 'aaaa1111', promptText: 'tweak fusion UI legibility on mobile', promptTs: _previewNow - 1000, cost: 0.42, tokens: 18000, cwd: 'C:/Users/redacted/Desktop/projects/stickerfort_clean' },
+    { sessionId: 'bbbb2222', promptText: 'backtest VIX>30 entry with SPXL', promptTs: _previewNow - 2000, cost: 0.31, tokens: 12000, cwd: 'C:/Users/redacted/Desktop/projects/trading' },
+    { sessionId: 'cccc3333', promptText: 'add pixel character avatars to the sidebar', promptTs: _previewNow - 3000, cost: 0.08, tokens: 4000, cwd: 'C:/Users/redacted/Desktop/projects/agents-viz' },
 ]));
 
 const now = Date.now();

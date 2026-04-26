@@ -3,32 +3,11 @@
 > VS Code 面板，把多个 Claude Code session 可视化成"项目房间里的像素小人"。
 > 一眼看到谁在干啥、卡在哪、烧了多少钱。
 
-```
-┌─ Agents Viz panel (top-down floor plan view) ────────────────────────┐
-│ 📅 Apr 25 Sat · 💰 $24.50 · 1.2M tok · 👥 8 sessions · ⚡ 3 live    │
-│ ▶ 📊 Activity heatmap     7 days × 24 hours                          │
-│ ▶ 💸 Top costly prompts   most expensive turns across all sessions   │
-├──────────────────────────────────────────────────────────────────────┤
-│ ┌─ stickerfort_clean ──────────┐  ┌─ trading ────────────────────┐   │
-│ │ 🔲 ~/Desktop/proj/sticker..  │  │ 🔲 ~/Desktop/proj/trading    │   │
-│ │ 💰 $1.45 · 2 sess            │  │ 💰 $0.96 · 2 sess            │   │
-│ │  🌿       🌿                 │  │  🌿  $0.78 ⚡    🛏 💤 🌿   │   │
-│ │   $0.03  $1.42⚡             │  │      🧍                      │   │
-│ │    🧍    🧍                  │  │       🪑                     │   │
-│ │     🪑    🪑                 │  │                              │   │
-│ └──────────────────────────────┘  └──────────────────────────────┘   │
-│ ┌─ agents-viz ─────────────────┐  ┌─ 📁 projects ────────────────┐   │
-│ │ 💰 $0.21 · 1 sess            │  │ 4 workspace-root sessions    │   │
-│ │  🌿  $0.21    🌿             │  │  🛏💤  🛏💤  🧍  🛏💤        │   │
-│ │      🧍                      │  │  $5.20 $3.10  $0.42  $2.30   │   │
-│ │       🪑                     │  │                              │   │
-│ └──────────────────────────────┘  └──────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────────┘
-       🧍 = 工作中     🪑 = 桌椅     🛏💤 = 蛋舱睡眠     ⚡ = 跑工具
-```
+![preview](screenshots/preview.png)
 
-老版的预览截图（不反映当前 UI）：`screenshots/preview_v5_tasks.png`（仅 sidebar + timeline）。
-当前 UI 的实际截图待补 — 装上后建议自己截一张提到这里。
+> 上图：5 个并发 session 渲染效果。trading 房间左侧 char 在跑工具（⚡），
+> 右侧蛋舱里是 2 天没动过的 session（💤），sidebar 显示项目名 + lifetime
+> token + 当前活动，顶栏每日汇总（cost / sessions / live / top project）。
 
 ---
 
