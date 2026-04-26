@@ -1,0 +1,66 @@
+{
+  "name": "agents-viz",
+  "displayName": "Agents Viz",
+  "description": "Virtual AI studio — manage Claude Code agents as pixel characters in project rooms",
+  "version": "0.2.0",
+  "private": true,
+  "publisher": "ysding",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Visualization", "Other"],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentsViz.open",
+        "title": "Agents Viz: Open Panel",
+        "category": "Agents Viz"
+      },
+      {
+        "command": "agentsViz.configureHooks",
+        "title": "Agents Viz: Configure Claude Code Hooks",
+        "category": "Agents Viz"
+      },
+      {
+        "command": "agentsViz.reloadPanel",
+        "title": "Agents Viz: Reload Panel",
+        "category": "Agents Viz"
+      },
+      {
+        "command": "agentsViz.restartHost",
+        "title": "Agents Viz: Restart Extension Host (keeps terminals)",
+        "category": "Agents Viz"
+      },
+      {
+        "command": "agentsViz.showLogs",
+        "title": "Agents Viz: Show Logs",
+        "category": "Agents Viz"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "agentsViz.open",
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "preview": "node ../scripts/export_webview_preview.js",
+    "preview:open": "node ../scripts/export_webview_preview.js && start chrome ../screenshots/preview.html",
+    "install-link": "node ../scripts/install_link.js",
+    "smoke": "node test/smoke.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.5.0"
+  }
+}

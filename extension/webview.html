@@ -1,0 +1,3081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; script-src 'unsafe-inline';">
+  <title>Agents Viz</title>
+  <style>
+    :root {
+      --evt-sessionstart: #4EC9B0;
+      --evt-userprompt: #DCDCAA;
+      --evt-pretool: #569CD6;
+      --evt-posttool: #4FC1FF;
+      --evt-stop: #808080;
+      --evt-notification: #F48771;
+
+      /* ─── Shared furniture palette (used by both floor plan rooms and sidebar avatars) ─── */
+      /* Sofa: green 3-piece (backrest, seat, armrests) */
+      --sofa-back:   linear-gradient(180deg, #6a8a74 0%, #4a6a54 100%);
+      --sofa-seat:   linear-gradient(180deg, #8aad94 0%, #5a7a64 100%);
+      --sofa-stripe: repeating-linear-gradient(90deg, rgba(0,0,0,0.08) 0 14px, transparent 14px 18px);
+      --sofa-edge:   #2a3a30;
+      --sofa-arm:    #4a6a54;
+
+      /* Bed: brown frame, white pillow, red plaid blanket */
+      --bed-frame:   linear-gradient(180deg, #8a5a3a 0%, #5a3820 100%);
+      --bed-edge:    #3a2818;
+      --pillow:      linear-gradient(180deg, #ffffff 0%, #f0f0e8 100%);
+      --pillow-edge: #2a2018;
+      --blanket-base: linear-gradient(180deg, #c24a4a 0%, #9a3a3a 100%);
+      --blanket-plaid-v: repeating-linear-gradient(90deg,
+          rgba(255,255,255,0.25) 0 2px, transparent 2px 8px,
+          rgba(0,0,0,0.12) 8px 10px, transparent 10px 16px);
+      --blanket-plaid-h: repeating-linear-gradient(0deg,
+          rgba(255,255,255,0.25) 0 2px, transparent 2px 8px,
+          rgba(0,0,0,0.12) 8px 10px, transparent 10px 16px);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100vh; overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: var(--vscode-foreground); background: var(--vscode-editor-background);
+      font-size: 12px;
+    }
+    #app { display: grid; grid-template-columns: 360px 1fr; height: 100vh; }
+
+    /* ─── Sidebar ─── */
+    #sidebar { border-right: 1px solid var(--vscode-panel-border); display: flex; flex-direction: column; overflow: hidden; }
+    #sidebar-header {
+      padding: 10px 12px; border-bottom: 1px solid var(--vscode-panel-border); font-weight: bold;
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      background: var(--vscode-editorWidget-background, #2a2d2e);
+      color: var(--vscode-foreground);
+    }
+    #sidebar-header .sub { opacity: 0.55; font-weight: normal; font-size: 11px; }
+    #sidebar-header label { font-weight: normal; font-size: 10px; opacity: 0.7; cursor: pointer; user-select: none; }
+    #sidebar-header label input { margin-right: 3px; vertical-align: middle; }
+    .session.hidden-by-filter { display: none; }
+    #sessions { flex: 1; overflow-y: auto; padding: 4px 0; }
+
+    /* Character card */
+    .session {
+      display: grid; grid-template-columns: 84px 1fr; gap: 12px;
+      padding: 12px; cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: background 0.15s ease;
+    }
+    .session:hover { background: var(--vscode-list-hoverBackground); }
+    /* Age-based dimming so stale sessions fade to the background */
+    .session.active   { /* state=selected below handles this */ }
+    .session.warm     { opacity: 1; }
+    .session.cool     { opacity: 0.75; }
+    .session.cold     { opacity: 0.5; }
+    .session.cold .avatar .pixel,
+    .session.cool .avatar .pixel { filter: saturate(0.4); }
+    .session.subagent { padding-left: 24px; opacity: 0.85; }
+
+    /* Gear menu (top-right of session card) */
+    .session { position: relative; }
+    .gear-btn {
+      position: absolute; top: 6px; right: 8px;
+      width: 22px; height: 22px; border-radius: 4px;
+      background: transparent; color: var(--vscode-foreground);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; opacity: 0; transition: opacity 0.15s ease, background 0.15s ease;
+      font-size: 14px; border: 1px solid transparent;
+      user-select: none;
+    }
+    .session:hover .gear-btn { opacity: 0.7; }
+    .gear-btn:hover { opacity: 1 !important; background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); }
+    .gear-menu {
+      position: absolute; top: 30px; right: 8px;
+      min-width: 140px;
+      background: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      z-index: 20;
+      display: none;
+    }
+    .gear-menu.open { display: block; }
+    .gear-menu-item {
+      padding: 8px 12px; cursor: pointer; font-size: 12px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .gear-menu-item:hover { background: var(--vscode-list-hoverBackground); }
+    .gear-menu-item.danger { color: #F48771; }
+
+    /* Confirmation modal */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+      display: none; align-items: center; justify-content: center; z-index: 100;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px; padding: 20px 24px; max-width: 440px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    }
+    .modal h3 { margin: 0 0 10px 0; font-size: 16px; }
+    .modal .danger-icon { color: #F48771; font-size: 20px; margin-right: 6px; }
+    .modal p { margin: 8px 0; line-height: 1.5; font-size: 12px; opacity: 0.9; }
+    .modal .session-summary {
+      margin: 10px 0; padding: 12px; background: var(--vscode-editorWidget-background);
+      border-radius: 4px;
+      display: grid; grid-template-columns: 56px 1fr; gap: 12px; align-items: center;
+    }
+    .modal .session-summary .avatar {
+      width: 56px; height: 84px;
+      background: rgba(255,255,255,0.04); border-radius: 4px;
+      display: flex; align-items: flex-end; justify-content: center; overflow: hidden;
+    }
+    .modal .session-summary .avatar .pixel {
+      width: 48px; height: 96px;
+      background-image: var(--sprite-url);
+      background-size: 336px 288px; background-position: 0 0; background-repeat: no-repeat;
+      image-rendering: pixelated;
+    }
+    .modal .session-summary .info { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 12px; }
+    .modal .session-summary .info .title { font-weight: 600; font-size: 13px; }
+    .modal .session-summary .info .sub { opacity: 0.6; font-family: monospace; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .modal .session-summary .recent {
+      grid-column: 1 / span 2; margin-top: 6px; padding-top: 8px;
+      border-top: 1px solid var(--vscode-panel-border);
+      display: flex; flex-direction: column; gap: 4px; font-size: 11px;
+    }
+    .modal .session-summary .recent .row {
+      display: grid; grid-template-columns: 75px 1fr; gap: 6px; align-items: baseline;
+    }
+    .modal .session-summary .recent .label { opacity: 0.55; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .modal .session-summary .recent .val { font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .modal label { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 10px 0; cursor: pointer; opacity: 0.85; }
+    .modal-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+    .modal-buttons button {
+      padding: 6px 14px; font-size: 12px; border-radius: 3px; cursor: pointer;
+      border: 1px solid var(--vscode-panel-border); background: transparent;
+      color: var(--vscode-foreground);
+    }
+    .modal-buttons button.primary-danger {
+      background: #A1260D; border-color: #A1260D; color: #fff;
+    }
+    .modal-buttons button:hover { background: var(--vscode-list-hoverBackground); }
+    .modal-buttons button.primary-danger:hover { background: #C42B17; }
+    .session.subagent .avatar { width: 56px; height: 84px; }
+    .session.subagent .avatar .pixel { width: 32px; height: 64px; background-size: 224px 192px; }
+    .sub-prefix { opacity: 0.45; margin-right: 3px; }
+    .session.active {
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+      border-left-color: #569CD6;
+    }
+
+    /* Pixel Agents sprite sheet: 112x96 = 7 cols x 3 rows of 16x32 frames.
+       Rows: 0 down, 1 up, 2 right. Cols: 0 idle, 1-6 animation frames.
+       Scale 3x → frame 48x96, sheet 336x288. */
+    .avatar {
+      position: relative; width: 72px; height: 104px;
+      display: flex; align-items: flex-end; justify-content: center;
+      background: rgba(255,255,255,0.04);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .avatar .pixel {
+      width: 48px; height: 96px;
+      background-image: var(--sprite-url);
+      background-size: 336px 288px;
+      background-position: 0 0;
+      background-repeat: no-repeat;
+      image-rendering: pixelated;
+    }
+    .avatar.waiting .pixel { animation: shake 0.4s ease-in-out infinite; }
+
+    /* Pixel Agents sprite frame layout per row (confirmed from vendor README):
+         col 0,1,2 = walk1, walk2 (idle stance), walk3
+         col 3,4   = type1, type2       (use for Bash/Write/Edit)
+         col 5,6   = read1, read2       (use for Read/Grep/Glob/WebFetch/WebSearch)
+       At 3x scale each frame is 48x96, so bg-position X steps by 48px.
+       Rows: 0 down (y=0), 1 up (y=-96), 2 right (y=-192). */
+
+    /* Default busy = walking down (cols 0→2→1→2 cycle) */
+    .avatar.busy .pixel { animation: walkDown 0.55s steps(1) infinite; }
+    @keyframes walkDown {
+      0%,100% { background-position:   0px 0px; }   /* walk1 */
+      25%     { background-position: -48px 0px; }   /* walk2 = idle stance */
+      50%     { background-position: -96px 0px; }   /* walk3 */
+      75%     { background-position: -48px 0px; }
+    }
+
+    /* ─── IDLE: character stands bottom-left, SOFA as background decor ─── */
+    /* Sofa sits BEHIND the character at upper-right; character takes bottom-left corner. */
+    .avatar.idle::before {
+      content: '';
+      position: absolute;
+      right: 4px; top: 12px;               /* upper-right corner */
+      width: 52px; height: 26px;           /* smaller so it's background */
+      background-image: url("__SOFA_FRONT__");
+      background-size: 52px 26px;
+      background-repeat: no-repeat;
+      image-rendering: pixelated;
+      opacity: 0.72;                        /* subdued so it reads as background */
+      z-index: 1;                           /* BEHIND the character */
+    }
+    /* Character stands in bottom-left, subtle weight-shift between col0/col1/col2 */
+    .avatar.idle .pixel {
+      position: absolute;
+      left: 4px; bottom: 4px;               /* bottom-left corner */
+      margin-left: 0;
+      animation: idleSway 3.2s steps(1) infinite, idleNod 3.2s ease-in-out infinite;
+      z-index: 2;                           /* IN FRONT of sofa */
+    }
+    @keyframes idleSway {
+      /* col 1 = idle stance most of the time, brief shift to col 0/col 2 for weight change */
+      0%,   100% { background-position: -48px 0px; }   /* col 1 */
+      30%, 55%   { background-position: 0px    0px; }  /* col 0 (subtle lean) */
+      60%, 85%   { background-position: -96px  0px; }  /* col 2 (other side) */
+    }
+    @keyframes idleNod {
+      0%,100% { transform: translateY(0); }
+      50%     { transform: translateY(-1px); }
+    }
+    /* Tiny pixel-art "Zzz" drawn with CSS (no emoji) */
+    .avatar.idle::after {
+      content: 'Z';
+      position: absolute;
+      top: 6px; right: 10px;
+      font-family: monospace; font-size: 10px; font-weight: bold;
+      color: #d5e8ff; letter-spacing: -1px;
+      text-shadow: 1px 1px 0 #1a1a2e;
+      animation: zzzRise 2.4s ease-in-out infinite;
+      z-index: 3;
+    }
+    @keyframes zzzRise {
+      0%   { opacity: 0; transform: translate(0, 0) scale(0.9); }
+      20%  { opacity: 0.9; }
+      60%  { opacity: 0.6; }
+      100% { opacity: 0; transform: translate(3px, -10px) scale(1.2); }
+    }
+    .avatar.idle > .blanket { display: none; }
+    .avatar.idle .action-badge { display: none; }
+    .session.cold .avatar.idle::before { filter: saturate(0.4) brightness(0.75); }
+    .session.cold .avatar.idle::after { display: none; }
+
+    /* ─── 4 IDLE VARIANTS (rotated per-session via hash; stable identity) ─── */
+
+    /* Variant 0: coffee sipping — reuse .blanket div as floating coffee cup */
+    .avatar.idle.idle-v0 > .blanket {
+      display: block;
+      position: absolute;
+      left: 30px; bottom: 26px;
+      width: 10px; height: 10px;
+      background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAaUlEQVR4nGNgoBQwYhOc2tDwH6cOkOTrty//P35+GYxZYBIgTk/tRIaw3EyGUncHVCtAku4G/mCBWfNqGeSNTOAKwCZsmrmW4drLe4xa4kpgux+eOwNXwAQishsaGPNTUsCSF08/RHEUABVeLLkzC2vOAAAAAElFTkSuQmCC");
+      background-size: 10px 10px;
+      background-repeat: no-repeat;
+      image-rendering: pixelated;
+      animation: coffeeSip 5s ease-in-out infinite;
+      z-index: 3;
+    }
+    .avatar.idle.idle-v0::after { display: none; }  /* hide Z */
+    @keyframes coffeeSip {
+      0%,  50%         { transform: translate(0, 0); }
+      60%, 72%         { transform: translate(-8px, -16px); }
+      85%, 100%        { transform: translate(0, 0); }
+    }
+
+    /* Variant 1: thinking bubble — replace Z with circular "?" above head */
+    .avatar.idle.idle-v1::after {
+      content: '?';
+      top: 3px; right: 6px;
+      width: 14px; height: 14px;
+      padding: 0;
+      font: bold 10px sans-serif;
+      color: #3a2a10;
+      text-shadow: none;
+      letter-spacing: 0;
+      background: rgba(250, 245, 210, 0.95);
+      border: 1px solid #1a1a2e;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: thinkPulse 3s ease-in-out infinite;
+    }
+    @keyframes thinkPulse {
+      0%, 100% { opacity: 0.55; transform: scale(1); }
+      50%      { opacity: 1.0;  transform: scale(1.12); }
+    }
+
+    /* Variant 2: napping — existing Z zzzRise animation is the default ::after style,
+       idle-v2 is effectively a no-op override. */
+
+    /* Variant 3: stretching — add vertical scale pulse to character sprite */
+    .avatar.idle.idle-v3 .pixel {
+      animation: idleSway 3.2s steps(1) infinite, idleStretch 4.2s ease-in-out infinite;
+    }
+    .avatar.idle.idle-v3::after { display: none; }
+    @keyframes idleStretch {
+      0%, 68%, 100% { transform: translateY(0) scaleY(1); }
+      78%, 88%      { transform: translateY(-2px) scaleY(1.08); }
+    }
+
+    /* Variant 4: scrolling a phone — small 4x6 black rectangle with blue screen near hand */
+    .avatar.idle.idle-v4 > .blanket {
+      display: block;
+      position: absolute;
+      left: 30px; bottom: 30px;
+      width: 5px; height: 8px;
+      background: #14161f;
+      border: 1px solid #3a3f4e;
+      box-shadow: inset 0 -1px 0 #2a78d4;       /* blue screen sliver at bottom */
+      animation: phoneBob 2.4s ease-in-out infinite;
+      z-index: 3;
+    }
+    .avatar.idle.idle-v4::after { display: none; }
+    @keyframes phoneBob {
+      0%, 100% { transform: translate(0, 0); }
+      50%      { transform: translate(-1px, -2px); }
+    }
+
+    /* Variant 5: waving — rapid type-frame flicker simulating hand wave + motion lines */
+    .avatar.idle.idle-v5 .pixel {
+      animation: idleWave 1.4s steps(1) infinite;
+    }
+    @keyframes idleWave {
+      0%,  50%, 100% { background-position: -144px 0px; }   /* col 3 = type1 */
+      25%, 75%       { background-position: -192px 0px; }   /* col 4 = type2 */
+    }
+    .avatar.idle.idle-v5::after {
+      content: '~';
+      top: 8px; right: 14px;
+      width: auto; height: auto;
+      padding: 0;
+      font: bold 14px monospace;
+      color: #7ec8ff;
+      text-shadow: 1px 1px 0 #1a1a2e;
+      background: transparent;
+      border: none;
+      animation: waveLine 1.4s ease-in-out infinite;
+    }
+    @keyframes waveLine {
+      0%, 100% { opacity: 0.3; transform: translate(0, 0); }
+      50%      { opacity: 1;   transform: translate(2px, -3px); }
+    }
+
+    /* ─── Sidebar uses the floor-plan .room-char directly (shared visuals) ─── */
+    /* The host simply frames the room-char; no pseudo-element sofa/bed here
+       (those live on .room-char itself via shared --sofa-*/--bed-* vars). */
+    .avatar.avatar-host { background: transparent; overflow: visible;
+      display: flex; align-items: flex-end; justify-content: center; }
+    .avatar.avatar-host::before, .avatar.avatar-host::after { display: none !important; }
+    .avatar.avatar-host .room-char.sidebar-char {
+      /* keep native proportions; transform-scale so long-stale bed (96px wide) fits 72px host */
+      transform-origin: bottom center;
+      margin-bottom: 4px;
+    }
+    .avatar.avatar-host .room-char.sidebar-char.long-stale {
+      transform: scale(0.82); /* 88*0.82 ≈ 72 → fits sidebar avatar slot */
+    }
+    /* OVERRIDE old .avatar .pixel rules — they were sized for 48×96 @ 336×288.
+       Our new inner .room-char uses 32×64 @ 224×192 native sizing. */
+    .avatar.avatar-host .room-char.sidebar-char .pixel {
+      width: 32px !important;
+      height: 64px !important;
+      background-size: 224px 192px !important;
+      position: absolute !important;
+      left: 50% !important;
+      bottom: 8px !important;
+      top: auto !important;
+      margin: 0 !important;
+      transform: translateX(-50%);
+      animation: none;
+    }
+    /* Busy: use typeAtDesk (same as floor plan) — prevents old walkDown from leaking in */
+    .avatar.avatar-host .room-char.sidebar-char .pixel.busy {
+      animation: typeAtDesk 0.35s steps(1) infinite !important;
+    }
+    .avatar.avatar-host .room-char.sidebar-char .pixel.waiting {
+      animation: shake 0.4s ease-in-out infinite !important;
+    }
+    /* Long-stale: egg-pod pose. Re-assert native sizing + head-only mask. */
+    .avatar.avatar-host .room-char.sidebar-char.long-stale .pixel {
+      width: 32px !important;
+      height: 64px !important;
+      background-size: 224px 192px !important;
+      left: 9px !important;
+      bottom: 12px !important;
+      top: auto !important;
+      transform: none !important;
+      background-position: 0 0 !important;
+      animation: none !important;
+      -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 26px, rgba(0,0,0,0.6) 36px, transparent 44px) !important;
+              mask-image: linear-gradient(180deg, #000 0%, #000 26px, rgba(0,0,0,0.6) 36px, transparent 44px) !important;
+    }
+
+    /* LEGACY: keep old .avatar.stale/long-stale rules dormant when avatar-host present */
+    .avatar.avatar-host.stale .pixel,
+    .avatar.avatar-host.long-stale .pixel,
+    .avatar.avatar-host.stale > .blanket,
+    .avatar.avatar-host.long-stale > .blanket,
+    .avatar.avatar-host .action-badge { /* no legacy overrides needed — room-char owns the look */ }
+
+    /* ─── Sidebar stale/long-stale OBSOLETE (room-char handles all the visuals now) ─── */
+    /* Kept empty to preserve line numbering; see .avatar-host .room-char rules above. */
+
+    /* ─── Per-action sprite treatment for busy states ─── */
+
+    /* thinking: stand still on col 1 (idle stance), subtle bob */
+    .avatar.busy.action-thinking .pixel {
+      animation: thinkBob 1.6s ease-in-out infinite;
+      background-position: -48px 0px;
+    }
+    @keyframes thinkBob {
+      0%,100% { background-position: -48px 0px; transform: translateY(0); }
+      50%     { background-position: -48px 0px; transform: translateY(-2px); }
+    }
+
+    /* coding (Bash): TYPE animation row 0 cols 3-4 */
+    .avatar.busy.action-coding .pixel {
+      animation: typeCycle 0.3s steps(1) infinite;
+    }
+    @keyframes typeCycle {
+      0%,100% { background-position: -144px 0px; }  /* col 3 = type1 */
+      50%     { background-position: -192px 0px; }  /* col 4 = type2 */
+    }
+
+    /* writing (Edit/Write): same TYPE animation, slightly slower */
+    .avatar.busy.action-writing .pixel {
+      animation: typeCycle 0.45s steps(1) infinite;
+    }
+
+    /* reading (Read/Grep/Glob): READ animation row 0 cols 5-6, facing down at desk */
+    .avatar.busy.action-reading .pixel {
+      animation: readCycle 0.7s steps(1) infinite;
+    }
+    @keyframes readCycle {
+      0%,100% { background-position: -240px 0px; }  /* col 5 = read1 */
+      50%     { background-position: -288px 0px; }  /* col 6 = read2 */
+    }
+
+    /* web (WebFetch/WebSearch): READ animation but facing UP (row 1) — looking up at screen */
+    .avatar.busy.action-web .pixel {
+      animation: readCycleUp 0.8s steps(1) infinite;
+    }
+    @keyframes readCycleUp {
+      0%,100% { background-position: -240px -96px; }  /* row 1 col 5 */
+      50%     { background-position: -288px -96px; }  /* row 1 col 6 */
+    }
+
+    /* delegating (Agent/Task): idle pose facing right + pulse */
+    .avatar.busy.action-delegating .pixel {
+      animation: delegatePulse 0.9s ease-in-out infinite;
+      background-position: -48px -192px;   /* row 2 col 1 = right idle */
+    }
+    @keyframes delegatePulse {
+      0%,100% { filter: brightness(1);   background-position: -48px -192px; }
+      50%     { filter: brightness(1.4); background-position: -48px -192px; }
+    }
+
+    /* planning (TodoWrite): read pose with slow tilt (checking a list) */
+    .avatar.busy.action-planning .pixel {
+      animation: planList 1.0s ease-in-out infinite alternate;
+      background-position: -240px 0px;    /* col 5 = read1 */
+    }
+    @keyframes planList {
+      from { background-position: -240px 0px; transform: translateY(0); }
+      to   { background-position: -288px 0px; transform: translateY(-1px); }
+    }
+    @keyframes bob {
+      0%, 100% { transform: translateY(0); }
+      50%      { transform: translateY(-3px); }
+    }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0) rotate(0); }
+      25%      { transform: translateX(-2px) rotate(-4deg); }
+      75%      { transform: translateX(2px) rotate(4deg); }
+    }
+    .action-badge {
+      position: absolute; bottom: -2px; right: -2px;
+      width: 24px; height: 24px;
+      background: var(--vscode-editor-background);
+      border: 2px solid var(--evt-pretool);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; line-height: 1;
+    }
+    .session.idle .action-badge  { border-color: rgba(128,128,128,0.5); }
+    .session.waiting .action-badge { border-color: var(--evt-notification); background: var(--evt-notification); }
+
+    .info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .info .title {
+      font-weight: 600; font-size: 13px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .info .subtitle {
+      font-size: 10px; opacity: 0.55;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font-family: monospace;
+    }
+    .info .status-line {
+      font-size: 11px; opacity: 0.85;
+      display: flex; align-items: center; gap: 4px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .info .status-line .dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: rgba(128,128,128,0.6);
+      flex-shrink: 0;
+    }
+    .session.busy .dot {
+      background: var(--evt-pretool);
+      animation: pulse 1s ease-in-out infinite;
+    }
+    .session.waiting .dot { background: var(--evt-notification); }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.5; transform: scale(1); }
+      50%      { opacity: 1;   transform: scale(1.3); }
+    }
+    .info .strip {
+      display: flex; gap: 2px; height: 10px; margin-top: 6px;
+      padding: 1px; border-radius: 3px;
+      background: rgba(0,0,0,0.2);
+    }
+    .info .strip span { flex: 1; background: var(--vscode-editorWidget-background); border-radius: 2px; min-width: 3px; }
+    /* GitHub-graph style: cells colored by the TOOL used in that 1-min bin.
+       Empty bins show default editor-widget background (dim). */
+    .info .strip span.empty        { background: rgba(255,255,255,0.06); }
+    .info .strip span.tool-prompt  { background: #DCDCAA; }  /* yellow = user prompt */
+    .info .strip span.tool-bash    { background: #569CD6; }  /* blue = shell */
+    .info .strip span.tool-edit    { background: #4EC9B0; }  /* teal = write/edit */
+    .info .strip span.tool-read    { background: #F48771; }  /* orange = read/search */
+    .info .strip span.tool-web     { background: #9CDCFE; }  /* light-blue = web */
+    .info .strip span.tool-agent   { background: #C586C0; }  /* magenta = subagent */
+    .info .strip span.tool-plan    { background: #CE9178; }  /* brown = plan */
+    .info .strip span.tool-other   { background: #808080; }
+    /* Legacy event-based class styling kept for compatibility w/ old meta.strip values */
+    .info .strip span.SessionStart { background: var(--evt-sessionstart); }
+    .info .strip span.UserPromptSubmit { background: var(--evt-userprompt); }
+    .info .strip span.PreToolUse { background: var(--evt-pretool); }
+    .info .strip span.PostToolUse { background: var(--evt-posttool); }
+    .info .strip span.Stop { background: var(--evt-stop); }
+    .info .strip span.Notification { background: var(--evt-notification); }
+
+    /* Token/cost badge — shown under the event strip when JSONL usage is available.
+       Coin icon is an inline SVG data URI so it renders in any font environment. */
+    .info .cost-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      margin-top: 4px;
+      padding: 1px 6px;
+      font-size: 10px;
+      line-height: 1.3;
+      font-variant-numeric: tabular-nums;
+      color: var(--vscode-foreground);
+      background: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 3px;
+      opacity: 0.82;
+      cursor: help;
+    }
+    .session:hover .info .cost-badge { opacity: 1; }
+    .info .cost-badge .coin {
+      display: inline-block;
+      width: 10px; height: 10px;
+      /* golden pixel coin: 8x8 circle with highlight + "$" mark — crisp at all zooms */
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><circle cx='5' cy='5' r='4.5' fill='%23f5c538' stroke='%23a37a12' stroke-width='1'/><circle cx='3.3' cy='3.3' r='1' fill='%23fff3b0' opacity='0.9'/><text x='5' y='7.4' font-family='Arial' font-weight='bold' font-size='5.5' fill='%238a5c00' text-anchor='middle'>$</text></svg>");
+      background-size: 10px 10px;
+      background-repeat: no-repeat;
+      flex-shrink: 0;
+    }
+
+    #sidebar-footer { padding: 10px 12px; border-top: 1px solid var(--vscode-panel-border); font-size: 10px; opacity: 0.6; line-height: 1.5; }
+    #sidebar-search { padding: 6px 10px 4px 10px; border-bottom: 1px solid var(--vscode-panel-border); }
+    #search-box {
+      width: 100%; box-sizing: border-box;
+      padding: 4px 8px; font-size: 11px;
+      background: var(--vscode-input-background, rgba(0,0,0,0.25));
+      color: var(--vscode-input-foreground, #ddd);
+      border: 1px solid var(--vscode-input-border, rgba(255,255,255,0.1));
+      border-radius: 3px;
+      outline: none;
+    }
+    #search-box:focus { border-color: var(--vscode-focusBorder, #007acc); }
+
+    /* ─── Main = floor plan (top, flex) + timeline drawer (bottom) ─── */
+    #main { display: flex; flex-direction: column; overflow: hidden; }
+
+    /* Floor plan: top-down view, grid of square rooms with hallway gaps */
+    /* Daily summary strip — pinned to top of main, glanceable status */
+    #daily-strip {
+      flex-shrink: 0;
+      display: flex; flex-wrap: wrap; gap: 8px 18px;
+      align-items: center;
+      padding: 8px 18px;
+      font-size: 11px; line-height: 1.4;
+      background: linear-gradient(180deg, #2a2f3e 0%, #232734 100%);
+      border-bottom: 1px solid var(--vscode-panel-border);
+      color: var(--vscode-foreground);
+    }
+    #daily-strip .ds-section {
+      white-space: nowrap;
+      opacity: 0.85;
+    }
+    #daily-strip .ds-section span {
+      font-weight: 600;
+      color: var(--vscode-foreground);
+      opacity: 1;
+    }
+    #daily-strip .ds-flex {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    #ds-cost { color: #ffe27a; }
+    #ds-active { color: #6affb4; }
+    /* Heatmap section: collapsible header bar + grid below */
+    #heatmap-section {
+      flex-shrink: 0;
+      background: #232734;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    #heatmap-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 18px;
+      font-size: 11px; color: var(--vscode-foreground);
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.12s;
+    }
+    #heatmap-header:hover { background: rgba(255,255,255,0.04); }
+    #heatmap-header .hm-chevron {
+      display: inline-block;
+      font-size: 9px;
+      transition: transform 0.18s ease;
+      width: 10px;
+    }
+    #heatmap-section.open #heatmap-header .hm-chevron { transform: rotate(90deg); }
+    #heatmap-header .hm-title { font-weight: 600; }
+    #heatmap-header .hm-sub   { opacity: 0.55; font-size: 10px; }
+
+    /* Cost leaderboard: list of top expensive prompts */
+    #costboard-section {
+      flex-shrink: 0;
+      background: #232734;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    #costboard-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 18px;
+      font-size: 11px; color: var(--vscode-foreground);
+      cursor: pointer; user-select: none;
+      transition: background 0.12s;
+    }
+    #costboard-header:hover { background: rgba(255,255,255,0.04); }
+    #costboard-section.open #costboard-header .hm-chevron { transform: rotate(90deg); }
+    #costboard-list {
+      display: flex; flex-direction: column;
+      padding: 4px 18px 12px 18px;
+      max-height: 280px;
+      overflow-y: auto;
+      gap: 4px;
+    }
+    #costboard-list.hidden { display: none; }
+    .cb-row {
+      display: grid;
+      grid-template-columns: 50px 110px 1fr 60px;
+      gap: 8px; align-items: center;
+      padding: 4px 6px; border-radius: 3px;
+      background: rgba(255,255,255,0.03);
+      font-size: 11px; cursor: pointer;
+      transition: background 0.1s;
+    }
+    .cb-row:hover { background: rgba(255,255,255,0.08); }
+    .cb-cost { color: #ffe27a; font-weight: 700; font-family: monospace; text-align: right; }
+    .cb-proj { opacity: 0.7; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cb-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0.9; }
+    .cb-tok  { font-size: 10px; opacity: 0.6; font-family: monospace; text-align: right; }
+
+    /* Activity heatmap: 7 rows (days) × 24 cols (hours), colored by event count */
+    #heatmap-row {
+      display: flex; gap: 18px; align-items: flex-start;
+      padding: 4px 18px 12px 18px;
+      font-size: 9px; color: var(--vscode-foreground);
+      overflow-x: auto;
+    }
+    #heatmap-row.hidden { display: none; }
+    #heatmap-grid {
+      display: grid;
+      grid-template-columns: 28px repeat(24, 14px); /* 1 label col + 24 hour cols */
+      grid-template-rows: 14px repeat(7, 14px);     /* 1 header row + 7 day rows */
+      gap: 2px;
+      align-content: start;
+    }
+    .hg-corner, .hg-hour-lbl, .hg-day-lbl {
+      font-size: 8px; opacity: 0.6;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .hg-day-lbl { justify-content: flex-end; padding-right: 4px; }
+    .hg-cell {
+      width: 14px; height: 14px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.05);
+      transition: background 0.15s;
+    }
+    .hg-cell[data-l="1"] { background: rgba(106,255,180,0.18); }
+    .hg-cell[data-l="2"] { background: rgba(106,255,180,0.40); }
+    .hg-cell[data-l="3"] { background: rgba(106,255,180,0.65); }
+    .hg-cell[data-l="4"] { background: rgba(106,255,180,0.95); }
+    #heatmap-legend {
+      display: flex; align-items: center; gap: 4px;
+      font-size: 9px; opacity: 0.7;
+      align-self: flex-end;   /* sit at the bottom of the row */
+    }
+    .hl-cell {
+      width: 12px; height: 12px; border-radius: 2px;
+      background: rgba(255,255,255,0.05);
+    }
+    .hl-cell[data-l="1"] { background: rgba(106,255,180,0.18); }
+    .hl-cell[data-l="2"] { background: rgba(106,255,180,0.40); }
+    .hl-cell[data-l="3"] { background: rgba(106,255,180,0.65); }
+    .hl-cell[data-l="4"] { background: rgba(106,255,180,0.95); }
+
+    .floor-plan {
+      flex: 1; overflow-y: auto;
+      padding: 24px;
+      background:
+        repeating-linear-gradient(0deg, rgba(0,0,0,0.08) 0 60px, transparent 60px 120px),
+        repeating-linear-gradient(90deg, rgba(0,0,0,0.08) 0 60px, transparent 60px 120px),
+        #1d2028;
+      display: flex; flex-wrap: wrap;
+      gap: 32px;
+      align-content: flex-start; align-items: flex-start;
+    }
+    .floor-plan-empty { width: 100%; margin: auto; }
+
+    /* Each room is a square-ish tile with thick walls */
+    .room {
+      position: relative;
+      flex-shrink: 0;            /* don't let flex container squeeze rooms below their computed width */
+      border-radius: 5px;
+      box-shadow:
+        0 3px 10px rgba(0,0,0,0.55),
+        inset 0 0 0 3px #2a2e3c,
+        inset 0 0 0 6px #5a4632;
+      overflow: hidden;
+      background: #34404f;
+    }
+    /* Wall is FIXED height — whiteboard + plants don't scale with room size.
+       Floor area fills the remainder; slots and bedroom are anchored to the wall bottom. */
+    .room { --wall-h: 110px; }
+    .room.room-lounge { background: #3d3a34; }
+
+    /* Room interior wall — fixed pixel height, sits at the top */
+    .room-wall {
+      position: absolute; left: 6px; right: 6px; top: 6px;
+      height: var(--wall-h);
+      background-image: var(--room-bg, linear-gradient(180deg, #3a4057 0%, #2c3347 100%));
+      background-size: cover; background-position: center;
+      border-radius: 2px;
+    }
+    .room-wall::before {
+      content: ''; position: absolute; inset: 0;
+      background:
+        linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.25) 100%),
+        repeating-linear-gradient(90deg, rgba(255,255,255,0.03) 0 40px, transparent 40px 80px);
+      pointer-events: none;
+    }
+    /* Whiteboard on the back wall */
+    .whiteboard {
+      position: absolute; top: 10px; left: 50%; transform: translateX(-50%) rotate(-0.4deg);
+      width: calc(100% - 32px); max-width: 100%;
+      background: #fbfaf1;
+      border: 2px solid #8a9eb4;
+      border-radius: 2px;
+      padding: 4px 8px 4px 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+      font-family: 'Segoe Marker', 'Marker Felt', 'Comic Sans MS', cursive;
+      color: #24344a;
+      z-index: 1;
+    }
+    .whiteboard::after {
+      content: ''; position: absolute; left: 20%; right: 20%; bottom: -4px; height: 3px;
+      background: linear-gradient(180deg, #7b8b9c 0%, #4a5a6c 100%);
+      border-radius: 0 0 2px 2px;
+    }
+    .whiteboard .wb-project {
+      font-size: 13px; font-weight: bold; line-height: 1.15;
+      color: #24344a;
+      white-space: normal;
+      word-break: normal;
+      overflow-wrap: break-word;
+      max-height: 32px;       /* up to 2 lines, then truncate */
+      overflow: hidden;
+    }
+    .whiteboard .wb-sub {
+      margin-top: 1px; font-size: 9px; opacity: 0.7; font-family: monospace;
+      color: #3c4a5e;
+      white-space: normal;
+      /* Prefer to break at <wbr> hints (we insert one after every "/" in JS).
+         word-break:normal + overflow-wrap:break-word means: break at break-points
+         first; only fall back to character break when a single segment is wider
+         than the box. */
+      word-break: normal;
+      overflow-wrap: break-word;
+      max-height: 36px;
+      overflow: hidden;
+      line-height: 1.2;
+    }
+    .whiteboard .wb-total {
+      margin-top: 2px; font-size: 9px; font-weight: 700; font-family: monospace;
+      color: #5a4010;
+      background: linear-gradient(180deg, #ffe27a 0%, #d49a25 100%);
+      padding: 1px 5px; border-radius: 3px;
+      border: 1px solid #8a6010;
+      display: inline-block; max-width: 100%;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .room.room-lounge .whiteboard { background: #ffe8a3; border-color: #b08540; }
+    .room.room-lounge .whiteboard .wb-project { color: #3c2a10; }
+    .room.room-lounge .whiteboard .wb-sub { color: #5c4620; }
+
+    /* Floor inside room — fills space below wall */
+    .room-floor {
+      position: absolute; left: 6px; right: 6px;
+      top: calc(var(--wall-h) + 6px); bottom: 6px;
+      background:
+        linear-gradient(180deg, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0) 20%),
+        repeating-linear-gradient(90deg,
+          #4a3a2a 0 20px, #523f30 20px 22px,
+          #4a3a2a 22px 42px, #523f30 42px 44px);
+      border-radius: 2px;
+    }
+    .room.room-lounge .room-floor {
+      background:
+        linear-gradient(180deg, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0) 25%),
+        repeating-linear-gradient(45deg,
+          #5a5048 0 14px, #4e4540 14px 16px);
+    }
+
+    /* Slot grid (work zone). Fills floor area minus bedroom width on the right.
+       Chars pile from top-left, top-down then wrap. */
+    .room-slots {
+      position: absolute; left: 12px;
+      right: var(--workzone-right, 12px);
+      top: calc(var(--wall-h) + 12px); bottom: 8px;
+      display: flex; flex-wrap: wrap; gap: 14px 18px;
+      align-items: flex-start; align-content: flex-start;
+      justify-content: flex-start;
+      padding: 6px 18px 8px 18px;     /* L/R padding 18 so chars aren't crammed against the wall */
+      z-index: 2;
+    }
+
+    /* Bedroom column — fills floor area on the right; width set in JS.
+       Padding leaves room above the pod (salary tag floats up) and below
+       (name tag extends down). */
+    .room-bedroom {
+      position: absolute; right: 12px;
+      top: calc(var(--wall-h) + 12px); bottom: 8px;
+      width: var(--bedroom-w, 0px);
+      display: flex; flex-wrap: wrap; gap: 28px 10px;
+      align-items: flex-start; align-content: flex-start;
+      justify-content: flex-start;
+      padding: 14px 14px 16px 14px;   /* L/R padding 14 so pods aren't crammed against the wall */
+      z-index: 2;
+      overflow: visible;
+    }
+
+    /* Each workstation = desk + chair + character seated */
+    .room-char {
+      position: relative;
+      width: 54px; height: 62px;
+      cursor: pointer;
+      pointer-events: auto;
+      transition: transform 0.15s ease;
+    }
+    .room-char:hover { transform: translateY(-2px); }
+    .room-char.selected { filter: drop-shadow(0 0 5px rgba(86,156,214,0.95)); }
+    .room-char.stale { opacity: 0.92; width: 60px; }
+    .room-char.stale .pixel {
+      filter: saturate(0.6) drop-shadow(0 2px 0 rgba(0,0,0,0.35));
+      bottom: 6px; /* sit on top of sofa cushion, feet/legs visible */
+      z-index: 4; /* on top of the low sofa */
+    }
+    /* Sofa backrest behind character (uses shared --sofa-* palette) */
+    .room-char.stale::before {
+      content: ''; display: block; position: absolute;
+      left: -6px; right: -6px; bottom: 18px; height: 26px;
+      background: var(--sofa-back);
+      border: 1.5px solid var(--sofa-edge);
+      border-radius: 6px 6px 2px 2px;
+      box-shadow: inset 0 2px 0 rgba(255,255,255,0.12);
+      transform: none;
+      width: auto;
+      z-index: 1;
+    }
+    /* Sofa seat cushion (low, below character) — character sits ON it */
+    .room-char.stale::after {
+      content: ''; position: absolute;
+      left: -6px; right: -6px; bottom: 2px; height: 10px;
+      background: var(--sofa-stripe), var(--sofa-seat);
+      border: 1.5px solid var(--sofa-edge);
+      border-radius: 3px;
+      box-shadow: 0 2px 3px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.15);
+      z-index: 2;
+    }
+    /* Armrests on left/right */
+    .room-char.stale .desk-item {
+      left: -10px; right: -10px; bottom: 4px;
+      transform: none; width: auto;
+      height: 18px;
+      background: transparent;
+      border-left: 5px solid var(--sofa-arm);
+      border-right: 5px solid var(--sofa-arm);
+      border-radius: 2px;
+      z-index: 3;
+      pointer-events: none;
+    }
+
+    /* ─── Long-stale (>1 day): true egg sleep pod, drawn via clip-path so the bottom
+       is round (not pointed) and the top tapers softly. Person stands inside with
+       face visible through the glass dome at the upper half. ─── */
+    .room-char.long-stale { width: 50px; height: 88px; opacity: 0.96; }
+    /* Person inside the egg. pixel.bottom positioned so head sits in upper half. */
+    .room-char.long-stale .pixel {
+      width: 32px !important; height: 64px !important;
+      left: 9px !important; bottom: 12px !important; top: auto !important;
+      transform: none !important;
+      z-index: 4 !important;
+      filter: saturate(0.75) brightness(1.0) !important;
+      background-position: 0 0 !important;
+      animation: none !important;
+      /* Soft fade: head fully visible (0-26px), neck/shoulders gradually fade
+         (26-44px), chest fully hidden behind opaque shell (44px+). */
+      -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 26px, rgba(0,0,0,0.6) 36px, transparent 44px) !important;
+              mask-image: linear-gradient(180deg, #000 0%, #000 26px, rgba(0,0,0,0.6) 36px, transparent 44px) !important;
+    }
+    /* Egg shell — clip-path defines a true egg silhouette. CRITICAL: must explicitly
+       reset height/width/inset because `.room-char.stale::before` (sofa rule that also
+       applies, since long-stale chars carry both classes) sets height:26px which would
+       collapse the egg to its top quarter. */
+    .room-char.long-stale::before {
+      content: ''; display: block; position: absolute;
+      left: 0 !important; right: 0 !important;
+      top: 0 !important; bottom: 6px !important;
+      width: auto !important; height: auto !important;
+      background:
+        radial-gradient(ellipse 38% 28% at 32% 25%, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.15) 40%, transparent 70%),
+        radial-gradient(ellipse 45% 35% at 76% 78%, rgba(0,0,0,0.4) 0%, transparent 60%),
+        linear-gradient(180deg, #ecf0f7 0%, #c0c8db 55%, #8a93ae 100%) !important;
+      clip-path: path('M 25,0 C 8,0 0,28 0,46 C 0,68 12,82 25,82 C 38,82 50,68 50,46 C 50,28 42,0 25,0 Z');
+      border: none !important;
+      border-radius: 0 !important;
+      box-shadow: 0 3px 5px rgba(0,0,0,0.45);
+      transform: none !important;
+      z-index: 2;
+    }
+    /* Glass dome — clip-path slice of the upper half of the egg. Forces height/inset
+       overrides because .room-char.stale::after (sofa cushion) would otherwise pin
+       height:10px / bottom:2px and shrink the dome to a sliver. */
+    .room-char.long-stale::after {
+      content: ''; position: absolute;
+      left: 0 !important; right: 0 !important;
+      top: 0 !important; bottom: auto !important;
+      width: auto !important; height: 44px !important;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0.22) 22%, transparent 48%),
+        linear-gradient(180deg, rgba(170,205,235,0.28) 0%, rgba(120,160,200,0.38) 100%) !important;
+      clip-path: path('M 25,0 C 8,0 0,28 0,44 L 50,44 C 50,28 42,0 25,0 Z');
+      border: none !important;
+      border-bottom: 1.5px solid rgba(80,100,140,0.7) !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      transform: none !important;
+      z-index: 5;
+      pointer-events: none;
+    }
+    /* Base pedestal + cyan status LED, via .desk-item */
+    .room-char.long-stale .desk-item {
+      display: block;
+      position: absolute;
+      left: 8px; right: 8px;
+      bottom: 0; top: auto; height: 6px;
+      transform: none;
+      background:
+        /* the LED dot, sitting on the front of the pedestal */
+        radial-gradient(circle 1.5px at 50% 60%, #6affb4 0%, #1a8050 70%, transparent 100%),
+        /* pedestal */
+        linear-gradient(180deg, #4a5470 0%, #2a3148 100%);
+      border: 1px solid #5a6480;
+      border-radius: 2px;
+      box-shadow:
+        0 1px 2px rgba(0,0,0,0.5),
+        0 0 4px rgba(100,255,180,0.4);
+      z-index: 4;
+      pointer-events: none;
+      animation: podLed 2.6s ease-in-out infinite;
+    }
+    @keyframes podLed {
+      0%, 100% { box-shadow: 0 1px 2px rgba(0,0,0,0.5), 0 0 3px rgba(100,255,180,0.3); }
+      50%      { box-shadow: 0 1px 2px rgba(0,0,0,0.5), 0 0 6px rgba(100,255,180,0.7); }
+    }
+    /* desk-item not used in capsule mode */
+    .room-char.long-stale .desk-item { display: none; }
+    /* Z badge above the head — float up out of the dome */
+    .room-char.long-stale .char-badge {
+      font-size: 16px;
+      top: -10px;
+      right: auto; left: 50%; transform: translateX(-50%);
+      animation: zzzFloatInline 2.4s ease-in-out infinite;
+      z-index: 6;
+    }
+    @keyframes zzzFloatInline {
+      0%, 100% { transform: translateX(-50%) translateY(0); opacity: 0.75; }
+      50%      { transform: translateX(-50%) translateY(-4px); opacity: 1.0; }
+    }
+    /* Name tag below the capsule */
+    .room-char.long-stale .char-tag { bottom: -12px; }
+    /* (legacy slot — actual pod salary positioning is below in the long-stale block) */
+
+    /* ─── Sleep pod (CLEAN refactor v2): standalone DOM template, no overlap with
+       .room-char or .stale. Element structure:
+         <div class="pod-cell">
+           <div class="pod-shell"></div>      ← egg silhouette via clip-path
+           <div class="pod-dome"></div>       ← upper half glass overlay
+           <div class="pod-head"></div>       ← character head sprite (masked)
+           <div class="pod-pedestal"></div>   ← base
+           <div class="pod-badge">💤</div>
+           <div class="pod-salary">$X.XX</div>
+           <div class="pod-name">name</div>
+         </div>
+    */
+    .pod-cell {
+      position: relative;
+      width: 50px; height: 88px;
+      cursor: pointer;
+      pointer-events: auto;
+      transition: transform 0.15s ease;
+      flex-shrink: 0;
+    }
+    .pod-cell:hover { transform: translateY(-2px); }
+    .pod-cell.selected { filter: drop-shadow(0 0 5px rgba(86,156,214,0.95)); }
+
+    /* Egg shell — opaque body filling most of the cell */
+    .pod-cell .pod-shell {
+      position: absolute;
+      left: 0; right: 0; top: 0; bottom: 6px;
+      background:
+        radial-gradient(ellipse 38% 28% at 32% 25%, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.15) 40%, transparent 70%),
+        radial-gradient(ellipse 45% 35% at 76% 78%, rgba(0,0,0,0.4) 0%, transparent 60%),
+        linear-gradient(180deg, #ecf0f7 0%, #c0c8db 55%, #8a93ae 100%);
+      clip-path: path('M 25,0 C 8,0 0,28 0,46 C 0,68 12,82 25,82 C 38,82 50,68 50,46 C 50,28 42,0 25,0 Z');
+      z-index: 2;
+    }
+    /* Glass dome covering upper half — sits on top of the head for tinting */
+    .pod-cell .pod-dome {
+      position: absolute;
+      left: 0; right: 0; top: 0; height: 44px;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0.22) 22%, transparent 48%),
+        linear-gradient(180deg, rgba(170,205,235,0.28) 0%, rgba(120,160,200,0.38) 100%);
+      clip-path: path('M 25,0 C 8,0 0,28 0,44 L 50,44 C 50,28 42,0 25,0 Z');
+      z-index: 5;
+      pointer-events: none;
+    }
+    /* Character head — sprite, masked to top portion only */
+    .pod-cell .pod-head {
+      position: absolute;
+      width: 32px; height: 64px;
+      left: 9px; bottom: 12px;
+      background-image: var(--sprite-url);
+      background-size: 224px 192px;
+      background-position: 0 0;
+      background-repeat: no-repeat;
+      image-rendering: pixelated;
+      filter: saturate(0.75) brightness(1.0);
+      -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 26px, rgba(0,0,0,0.6) 36px, transparent 44px);
+              mask-image: linear-gradient(180deg, #000 0%, #000 26px, rgba(0,0,0,0.6) 36px, transparent 44px);
+      z-index: 4;
+    }
+    /* Base pedestal under the egg */
+    .pod-cell .pod-pedestal {
+      position: absolute;
+      left: 12px; right: 12px; bottom: 0; height: 6px;
+      background: linear-gradient(180deg, #4a5470 0%, #2a3148 100%);
+      border: 1px solid #5a6480;
+      border-radius: 2px;
+      box-shadow:
+        0 1px 2px rgba(0,0,0,0.5),
+        0 0 4px rgba(100,255,180,0.4);
+      z-index: 3;
+    }
+    .pod-cell .pod-pedestal::after {
+      /* status LED */
+      content: '';
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: 3px; height: 3px;
+      background: radial-gradient(circle, #6affb4 0%, #1a8050 100%);
+      border-radius: 50%;
+      animation: podLed 2.6s ease-in-out infinite;
+    }
+    @keyframes podLed {
+      0%, 100% { box-shadow: 0 0 3px rgba(100,255,180,0.4); opacity: 0.7; }
+      50%      { box-shadow: 0 0 6px rgba(100,255,180,0.9); opacity: 1.0; }
+    }
+    /* 💤 floating above */
+    .pod-cell .pod-badge {
+      position: absolute;
+      top: -10px; left: 50%; transform: translateX(-50%);
+      font-size: 16px; line-height: 1;
+      color: #bbddff;
+      filter: drop-shadow(0 1px 0 rgba(0,0,0,0.6));
+      animation: podZzz 2.4s ease-in-out infinite;
+      z-index: 6;
+      pointer-events: none;
+    }
+    @keyframes podZzz {
+      0%, 100% { transform: translateX(-50%) translateY(0); opacity: 0.7; }
+      50%      { transform: translateX(-50%) translateY(-3px); opacity: 1.0; }
+    }
+    /* Salary above */
+    .pod-cell .pod-salary {
+      position: absolute;
+      top: -2px; left: 50%; transform: translateX(-50%);
+      font-size: 7px; line-height: 1; font-weight: 700;
+      background: linear-gradient(180deg, #ffe27a 0%, #d49a25 100%);
+      color: #4a2c00;
+      padding: 1px 3px; border-radius: 3px;
+      border: 1px solid #8a6010;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.4);
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 7;
+    }
+    /* Name below */
+    .pod-cell .pod-name {
+      position: absolute;
+      bottom: -12px; left: 50%; transform: translateX(-50%);
+      font-size: 9px; white-space: nowrap;
+      background: rgba(0,0,0,0.75); color: #eee;
+      padding: 1px 4px; border-radius: 2px;
+      max-width: 100px; overflow: hidden; text-overflow: ellipsis;
+      pointer-events: none; opacity: 0;
+      transition: opacity 0.12s ease;
+      z-index: 5;
+    }
+    .pod-cell:hover .pod-name, .pod-cell.selected .pod-name { opacity: 1; }
+
+    /* ─── Decorations: plants in room corners (on floor, standing against wall) ─── */
+    .room-decor {
+      position: absolute; inset: 0;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .plant {
+      position: absolute; width: 20px; height: 34px;
+    }
+    .plant::before {
+      /* Pot */
+      content: ''; position: absolute; bottom: 0; left: 3px; right: 3px; height: 10px;
+      background: linear-gradient(180deg, #8a5a3a 0%, #5a3820 100%);
+      border: 1px solid #2a1810;
+      border-radius: 1px 1px 4px 4px;
+    }
+    .plant::after {
+      /* Leaves */
+      content: ''; position: absolute; bottom: 9px; left: -1px; right: -1px; height: 26px;
+      background:
+        radial-gradient(ellipse 6px 10px at 30% 60%, #3d6a3d 70%, transparent 72%),
+        radial-gradient(ellipse 5px 8px at 70% 45%, #4c7a4c 70%, transparent 72%),
+        radial-gradient(ellipse 7px 12px at 50% 20%, #4d864d 70%, transparent 72%),
+        radial-gradient(ellipse 5px 9px at 20% 30%, #5a9a5a 70%, transparent 72%);
+    }
+    /* Placed at room corners against the back wall (lower / floor-line area) */
+    .plant-left  { left: 10px;  bottom: 60px; }
+    .plant-right { right: 10px; bottom: 60px; transform: scaleX(-1); }
+    /* Clock on back wall (center-top of wall, next to whiteboard) */
+    .wall-clock {
+      position: absolute; top: 10px; right: 14px;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #fafafa 0 40%, #2a2a2a 42% 100%);
+      border: 2px solid #1a1a1a;
+      z-index: 1;
+    }
+    .wall-clock::before, .wall-clock::after {
+      content: ''; position: absolute; left: 50%; top: 50%;
+      background: #222; transform-origin: 0 100%;
+    }
+    .wall-clock::before { /* hour hand */
+      width: 1.5px; height: 5px; margin-left: -0.75px; margin-top: -5px;
+      transform: rotate(45deg);
+    }
+    .wall-clock::after { /* minute hand */
+      width: 1px; height: 7px; margin-left: -0.5px; margin-top: -7px;
+      transform: rotate(130deg);
+    }
+
+    /* Chair back (behind character) */
+    .room-char::before {
+      content: ''; position: absolute;
+      left: 50%; bottom: 14px; transform: translateX(-50%);
+      width: 22px; height: 26px;
+      background: #4a3020;
+      border: 1px solid #2a1a10;
+      border-radius: 3px 3px 1px 1px;
+      z-index: 1;
+    }
+    /* Desk in front (hides character's lower body → sitting effect) */
+    .room-char::after {
+      content: ''; position: absolute;
+      left: -4px; right: -4px; bottom: 0; height: 18px;
+      background: linear-gradient(180deg, #c5a575 0%, #8a6f4a 70%, #6a4f2f 100%);
+      border: 1px solid #3a2818;
+      border-radius: 2px;
+      box-shadow: 0 2px 3px rgba(0,0,0,0.4);
+      z-index: 3;
+    }
+    /* Pencil/paper speck on desk for detail */
+    .room-char .desk-item {
+      position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+      width: 8px; height: 3px; background: #3a2f22;
+      z-index: 4; pointer-events: none;
+    }
+
+    .room-char .pixel {
+      position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%);
+      width: 32px; height: 64px;
+      background-image: var(--sprite-url);
+      background-size: 224px 192px; background-position: 0 0; background-repeat: no-repeat;
+      image-rendering: pixelated;
+      filter: drop-shadow(0 2px 0 rgba(0,0,0,0.35));
+      z-index: 2; /* between chair (1) and desk (3) — legs hidden */
+    }
+    /* When busy → typing animation using cols 3-4 of sprite row 0 (type frames) */
+    .room-char .pixel.busy    { animation: typeAtDesk 0.35s steps(1) infinite; }
+    .room-char .pixel.waiting { animation: shake 0.4s ease-in-out infinite; }
+    /* monitoring = waiting on bg shell (BashOutput poll). Subtle lean-forward-watch anim. */
+    .room-char .pixel.monitoring {
+      animation: monitorBob 1.6s ease-in-out infinite;
+      filter: drop-shadow(0 2px 0 rgba(0,0,0,0.35)) drop-shadow(0 0 4px rgba(100,200,255,0.4));
+    }
+    @keyframes monitorBob {
+      0%,100% { transform: translateX(-50%) translateY(0); }
+      50%     { transform: translateX(-50%) translateY(-1px); }
+    }
+    @keyframes typeAtDesk {
+      0%   { background-position:  -96px 0; }
+      50%  { background-position: -128px 0; }
+      100% { background-position:  -96px 0; }
+    }
+
+    /* Name tag only on hover or selected */
+    .room-char .char-tag {
+      position: absolute; bottom: -12px; left: 50%; transform: translateX(-50%);
+      font-size: 9px; white-space: nowrap;
+      background: rgba(0,0,0,0.75); color: #eee;
+      padding: 1px 4px; border-radius: 2px;
+      max-width: 140px; overflow: hidden; text-overflow: ellipsis;
+      pointer-events: none; opacity: 0; transition: opacity 0.12s ease;
+      z-index: 5;
+    }
+    .room-char:hover .char-tag, .room-char.selected .char-tag { opacity: 1; }
+
+    /* "AI salary" coin tag: lifetime token cost ($, k-tokens). Tucked to the left of the head. */
+    .room-char .char-salary {
+      position: absolute; top: -2px; left: -6px;
+      font-size: 8px; line-height: 1; font-weight: 700;
+      background: linear-gradient(180deg, #ffe27a 0%, #d49a25 100%);
+      color: #4a2c00;
+      padding: 1px 3px; border-radius: 4px;
+      border: 1px solid #8a6010;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.4);
+      pointer-events: none;
+      z-index: 6;
+      white-space: nowrap;
+    }
+    /* Pod salary: above the egg, centered. Avoids the bedroom's overflow:hidden
+       clip on left edge; small horizontal extent so it stays within the pod's footprint. */
+    .room-char.long-stale .char-salary {
+      top: -10px; left: 50%; right: auto;
+      transform: translateX(-50%);
+      font-size: 7px; padding: 1px 3px;
+    }
+
+    /* Regular busy/waiting badge — small corner chip */
+    .room-char .char-badge {
+      position: absolute; top: 0; right: -4px;
+      font-size: 10px; line-height: 1;
+      background: rgba(0,0,0,0.75); color: #ff8;
+      padding: 2px 3px; border-radius: 8px;
+      z-index: 5;
+    }
+    /* Monitoring badge (bg-shell watching): pulsing cyan circle with 🔍 emoji */
+    .room-char.monitoring .char-badge,
+    .room-char .pixel.monitoring ~ .char-badge {
+      /* stronger contrast against the dark room bg */
+      top: -10px; right: -8px;
+      font-size: 14px; line-height: 1;
+      background: radial-gradient(circle, #4ab8ff 0%, #2a7ac8 100%);
+      color: #ffffff;
+      padding: 3px 5px; border-radius: 10px;
+      border: 1.5px solid #1a4a80;
+      box-shadow: 0 0 10px rgba(100,200,255,0.85);
+      animation: monitorPulse 1.4s ease-in-out infinite;
+    }
+    @keyframes monitorPulse {
+      0%, 100% { box-shadow: 0 0 6px rgba(100,200,255,0.6); transform: scale(1); }
+      50%      { box-shadow: 0 0 14px rgba(150,220,255,1.0); transform: scale(1.1); }
+    }
+    /* Sleep badge: bigger floating Z above head, with bob animation */
+    .room-char.stale .char-badge {
+      top: -14px; right: 50%; transform: translateX(50%);
+      background: transparent;
+      color: #bbddff;
+      font-size: 20px;
+      padding: 0;
+      filter: drop-shadow(0 1px 0 rgba(0,0,0,0.6));
+      animation: zzzFloat 2.4s ease-in-out infinite;
+    }
+    @keyframes zzzFloat {
+      0%, 100% { transform: translate(50%, 0); opacity: 0.7; }
+      50%      { transform: translate(50%, -3px); opacity: 1.0; }
+    }
+
+    /* ─── Timeline drawer (bottom) ─── */
+    #timeline-drawer {
+      border-top: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-editor-background);
+      display: flex; flex-direction: column;
+      height: 35%; min-height: 140px; max-height: 60%;
+      transition: height 0.2s ease;
+    }
+    #timeline-drawer.collapsed { height: 32px; min-height: 32px; }
+    #timeline-drawer.collapsed #filter-bar,
+    #timeline-drawer.collapsed #timeline-wrap { display: none; }
+    #timeline-drawer-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+      background: var(--vscode-editorWidget-background);
+      font-size: 11px; user-select: none;
+    }
+    #drawer-title { font-weight: bold; }
+    #drawer-sub { opacity: 0.6; font-family: monospace; font-size: 10px; flex: 1;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #drawer-toggle {
+      background: transparent; border: 1px solid transparent; color: var(--vscode-foreground);
+      width: 24px; height: 22px; border-radius: 3px; cursor: pointer;
+    }
+    #drawer-toggle:hover { background: rgba(255,255,255,0.08); }
+    #timeline-drawer.collapsed #drawer-toggle { transform: rotate(-90deg); }
+    #timeline-wrap { flex: 1; overflow-y: auto; padding: 12px 16px; }
+    .timeline { position: relative; margin-left: 14px; }
+    .timeline::before { content: ''; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; background: var(--vscode-panel-border); }
+
+    /* Task block = UserPromptSubmit → Stop collapsible group */
+    .task {
+      margin: 10px 0 14px 0;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--vscode-editor-background);
+    }
+    .task-header {
+      display: grid; grid-template-columns: 18px 60px 1fr auto; gap: 10px; align-items: center;
+      padding: 8px 12px;
+      cursor: pointer;
+      background: var(--vscode-editorWidget-background);
+      user-select: none;
+    }
+    .task-header:hover { background: var(--vscode-list-hoverBackground); }
+    .task-fold {
+      display: inline-block; font-size: 10px; opacity: 0.7;
+      transition: transform 0.15s ease;
+    }
+    .task.open .task-fold { transform: rotate(90deg); }
+    .task-ts { font-family: monospace; font-size: 10px; opacity: 0.5; }
+    .task-prompt {
+      font-weight: 600; font-size: 12px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .task-meta { font-size: 10px; opacity: 0.6; font-family: monospace; white-space: nowrap; }
+    .task-body { display: none; padding: 10px 12px 4px 24px; }
+    .task.open .task-body { display: block; }
+    .task-body .evt { margin-bottom: 4px; }
+    .evt {
+      position: relative; margin-bottom: 6px; padding: 6px 10px 6px 20px;
+      border-left: 2px solid transparent; border-radius: 3px;
+      background: var(--vscode-editorWidget-background);
+      cursor: pointer;
+    }
+    .evt::before {
+      content: ''; position: absolute; left: -5px; top: 11px;
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--vscode-panel-border);
+    }
+    .evt.SessionStart { border-color: var(--evt-sessionstart); }
+    .evt.SessionStart::before { background: var(--evt-sessionstart); }
+    .evt.UserPromptSubmit { border-color: var(--evt-userprompt); }
+    .evt.UserPromptSubmit::before { background: var(--evt-userprompt); }
+    .evt.PreToolUse { border-color: var(--evt-pretool); }
+    .evt.PreToolUse::before { background: var(--evt-pretool); }
+    .evt.PostToolUse { border-color: var(--evt-posttool); }
+    .evt.PostToolUse::before { background: var(--evt-posttool); }
+    .evt.Stop { border-color: var(--evt-stop); }
+    .evt.Stop::before { background: var(--evt-stop); }
+    .evt.Notification { border-color: var(--evt-notification); }
+    .evt.Notification::before { background: var(--evt-notification); }
+    .evt-row { display: flex; gap: 8px; align-items: baseline; font-size: 11px; }
+    .evt-ts { font-family: monospace; opacity: 0.5; min-width: 55px; }
+    .evt-emoji { font-size: 14px; min-width: 20px; text-align: center; }
+    .evt-name { font-weight: bold; min-width: 110px; }
+    .evt-summary { flex: 1; opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .evt-duration { font-family: monospace; opacity: 0.6; font-size: 10px; }
+    .evt-detail { display: none; margin-top: 8px; padding: 8px; background: var(--vscode-editor-background); border-radius: 3px; font-family: monospace; font-size: 10px; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
+    .evt.expanded .evt-detail { display: block; }
+    /* "Load older events" button at the top of the timeline */
+    .load-older-btn {
+      display: block; width: 100%;
+      margin: 0 0 8px 0; padding: 8px 12px;
+      background: var(--vscode-editorWidget-background);
+      color: var(--vscode-foreground);
+      border: 1px dashed var(--vscode-panel-border);
+      border-radius: 4px;
+      font-size: 11px; font-family: inherit;
+      cursor: pointer; opacity: 0.7;
+      transition: opacity 0.15s ease, background 0.15s ease;
+    }
+    .load-older-btn:hover:not(:disabled) { opacity: 1; background: var(--vscode-list-hoverBackground); }
+    .load-older-btn:disabled { cursor: default; opacity: 0.45; }
+    /* Subagent events nested inline in parent timeline — indent + lavender left border */
+    .evt.subagent-evt {
+      margin-left: 26px;
+      border-left-width: 3px;
+      opacity: 0.92;
+      background: color-mix(in srgb, var(--vscode-editorWidget-background) 85%, #7050c8 15%);
+    }
+    .evt-subagent-tag {
+      color: #c8b4ff;
+      font-size: 10px;
+      font-family: monospace;
+      white-space: nowrap;
+      max-width: 120px; overflow: hidden; text-overflow: ellipsis;
+      opacity: 0.85;
+    }
+
+    .empty { padding: 40px 20px; text-align: center; opacity: 0.55; line-height: 1.7; font-size: 12px; }
+    .empty code { background: var(--vscode-textCodeBlock-background); padding: 2px 6px; border-radius: 2px; font-size: 11px; }
+    #filter-bar { padding: 6px 16px; border-bottom: 1px solid var(--vscode-panel-border); font-size: 11px; display: flex; gap: 12px; opacity: 0.7; }
+    #filter-bar label { cursor: pointer; user-select: none; }
+    #filter-bar input[type=checkbox] { margin-right: 4px; vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <span>Agents <span class="sub" id="session-count" style="margin-left:4px">0</span></span>
+        <label><input type="checkbox" id="hide-old">Hide &gt;3d</label>
+      </div>
+      <div id="sidebar-search">
+        <input type="search" id="search-box" placeholder="search title / project / prompt / tool…" autocomplete="off">
+      </div>
+      <div id="sessions">
+        <div class="empty" style="font-size: 11px;">No active sessions.</div>
+      </div>
+      <div id="sidebar-footer">
+        <div>Agents Viz v0.3.0 · build __BUILD_STAMP__</div>
+        <div id="agent-stats">0 agents · 0 live</div>
+        <div id="event-count">0 events</div>
+        <div id="age-breakdown" style="font-size:9px; opacity:0.65; margin-top:3px"></div>
+      </div>
+    </aside>
+    <main id="main">
+      <div id="daily-strip">
+        <span class="ds-section">📅 <span id="ds-date">Today</span></span>
+        <span class="ds-section">💰 <span id="ds-cost">$0</span> · <span id="ds-tok">0 tok</span></span>
+        <span class="ds-section">👥 <span id="ds-sessions">0</span> sessions</span>
+        <span class="ds-section">⚡ <span id="ds-active">0</span> live</span>
+        <span class="ds-section ds-flex" id="ds-top">—</span>
+      </div>
+      <div id="heatmap-section">
+        <div id="heatmap-header">
+          <span class="hm-chevron">▶</span>
+          <span class="hm-title">📊 Activity heatmap</span>
+          <span class="hm-sub">7 days × 24 hours</span>
+        </div>
+        <div id="heatmap-row" class="hidden">
+          <div id="heatmap-grid"></div>
+          <div id="heatmap-legend">
+            <span>less</span>
+            <span class="hl-cell" data-l="0"></span>
+            <span class="hl-cell" data-l="1"></span>
+            <span class="hl-cell" data-l="2"></span>
+            <span class="hl-cell" data-l="3"></span>
+            <span class="hl-cell" data-l="4"></span>
+            <span>more</span>
+          </div>
+        </div>
+      </div>
+      <div id="costboard-section">
+        <div id="costboard-header">
+          <span class="hm-chevron">▶</span>
+          <span class="hm-title">💸 Top costly prompts</span>
+          <span class="hm-sub">most expensive turns across all sessions</span>
+        </div>
+        <div id="costboard-list" class="hidden"></div>
+      </div>
+      <div id="floor-plan" class="floor-plan">
+        <div class="floor-plan-empty empty">Waiting for Claude Code sessions.</div>
+      </div>
+      <div id="timeline-drawer">
+        <div id="timeline-drawer-header">
+          <span id="drawer-title">Timeline</span>
+          <span id="drawer-sub"></span>
+          <button id="drawer-toggle" title="Collapse / expand timeline">▼</button>
+        </div>
+        <div id="filter-bar">
+          <label><input type="checkbox" data-filter="SessionStart" checked>Session</label>
+          <label><input type="checkbox" data-filter="UserPromptSubmit" checked>Prompts</label>
+          <label><input type="checkbox" data-filter="PreToolUse" checked>Pre-tool</label>
+          <label><input type="checkbox" data-filter="PostToolUse" checked>Post-tool</label>
+          <label><input type="checkbox" data-filter="Stop" checked>Stop</label>
+          <label><input type="checkbox" data-filter="Notification" checked>Notify</label>
+        </div>
+      <div id="timeline-wrap">
+        <div class="empty">
+          <p>Click a character in the floor plan or sidebar to see its timeline.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Delete confirmation modal -->
+  <div class="modal-overlay" id="delete-modal">
+    <div class="modal">
+      <h3><span class="danger-icon">⚠</span>Delete agent?</h3>
+      <p>This will remove the agent's events from this panel.</p>
+      <div class="session-summary" id="delete-summary"></div>
+      <label><input type="checkbox" id="delete-file">
+        Also move the underlying JSONL transcript <b>to Recycle Bin</b> (recoverable from there)
+      </label>
+      <p style="opacity:0.6; font-size:11px">Tip: without the checkbox, the agent is only removed from the panel. If new events arrive for its session id, it will re-appear.</p>
+      <div class="modal-buttons">
+        <button id="delete-cancel">Cancel</button>
+        <button id="delete-confirm" class="primary-danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+    const SPRITES = __SPRITE_URIS__;
+    const ROOM_IMAGES = __ROOM_IMAGES__;
+    // Defensive defaults: when an older extension build hasn't been reloaded
+    // (Developer: Reload Window), it won't know about new placeholder tokens and
+    // they'll remain as literal identifiers — turning the script into a ReferenceError
+    // that wipes the whole panel. typeof is the standard safe-existence guard.
+    const SESSION_USAGE = (typeof __SESSION_USAGE__ !== 'undefined') ? __SESSION_USAGE__ : {};
+    const PROMPT_COSTS  = (typeof __PROMPT_COSTS__  !== 'undefined') ? __PROMPT_COSTS__  : [];
+    const STRIP_LEN = 24;  /* 24 cells × 1hr bins = 24h activity view */
+
+    // Format: $1,234.56 | $12.3 | $0.45 | $0.00
+    function fmtCost(c) {
+      if (!c || c < 0.01) return '$0';
+      if (c >= 1000) return '$' + (c/1000).toFixed(1) + 'K';
+      if (c >= 100) return '$' + c.toFixed(0);
+      if (c >= 10) return '$' + c.toFixed(1);
+      return '$' + c.toFixed(2);
+    }
+    // Format: 1.2M, 345K, 123
+    function fmtTok(n) {
+      if (!n) return '0';
+      if (n >= 1_000_000) return (n/1_000_000).toFixed(1) + 'M';
+      if (n >= 1_000) return (n/1_000).toFixed(0) + 'K';
+      return String(n);
+    }
+
+    // tool → action emoji shown as badge on avatar + inline in timeline
+    const TOOL_EMOJI = {
+      Bash: '⌨️',
+      Read: '📖',
+      Write: '✍️',
+      Edit: '✍️',
+      MultiEdit: '✍️',
+      Grep: '🔍',
+      Glob: '🔍',
+      WebFetch: '🌐',
+      WebSearch: '🌐',
+      Agent: '🧠',
+      Task: '🧠',
+      TodoWrite: '📝',
+      NotebookEdit: '📓',
+      thinking: '💭',
+    };
+    const EVENT_EMOJI = {
+      SessionStart: '✨',
+      UserPromptSubmit: '💬',
+      PreToolUse: '⚡',
+      PostToolUse: '✅',
+      Stop: '⏹',
+      Notification: '🔔',
+    };
+
+    const state = vscode.getState() || { selected: null, hideOld: false };
+    if (state.hideOld === undefined) state.hideOld = false;
+    const bySession = new Map();
+    const sessionMeta = new Map();
+    const filters = new Set(['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','Notification']);
+
+    function hashIdx(s, mod) {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) >>> 0; }
+      return h % mod;
+    }
+
+    function sidBasename(cwd) {
+      if (!cwd) return '(no cwd)';
+      const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
+      return parts[parts.length - 1] || cwd;
+    }
+
+    // Generic sub-dir names that should NOT appear as a project label.
+    // When a session is cwd'd inside one, walk up to find the real project root.
+    const GENERIC_DIRS = new Set([
+      'extension', 'src', 'dist', 'build', 'lib', 'scripts', 'tests', 'test',
+      'node_modules', 'docs', 'doc', 'bin', 'target', '__pycache__',
+      'webview', 'webview-ui', 'server', 'client', 'app', 'apps', 'packages',
+      'addons', 'modules', 'vendor', 'public', 'assets', 'tools', 'examples'
+    ]);
+    // Parent-container dirs that are NOT project roots either — if a session's cwd
+    // never descends past these, we have nothing to show, so render a placeholder
+    // instead of faking a name like "projects".
+    const CONTAINER_DIRS = new Set([
+      'projects', 'desktop', 'documents', 'downloads', 'repos', 'workspace',
+      'workspaces', 'code', 'dev', 'development', 'home', 'users', 'user', 'c:'
+    ]);
+
+    /** Render the top-costly-prompts leaderboard */
+    function updateCostboard() {
+      const list = document.getElementById('costboard-list');
+      if (!list) return;
+      if (!PROMPT_COSTS || PROMPT_COSTS.length === 0) {
+        list.innerHTML = '<div style="opacity:0.5;text-align:center;padding:12px;font-size:11px">No usage data scanned yet — hot-reload the panel to refresh.</div>';
+        return;
+      }
+      const top = PROMPT_COSTS.slice(0, 30);
+      const rows = top.map((p, i) => {
+        const proj = projectName(p.cwd || '~') || '~';
+        return '<div class="cb-row" data-sid="' + escapeHtml(p.sessionId) + '" title="' + escapeHtml(p.promptText) + '">' +
+          '<span class="cb-cost">' + fmtCost(p.cost) + '</span>' +
+          '<span class="cb-proj">' + escapeHtml(proj) + '</span>' +
+          '<span class="cb-text">' + escapeHtml(p.promptText) + '</span>' +
+          '<span class="cb-tok">' + fmtTok(p.tokens) + '</span>' +
+        '</div>';
+      });
+      list.innerHTML = rows.join('');
+      // Click row → select that session in webview state
+      list.querySelectorAll('.cb-row').forEach(row => {
+        row.addEventListener('click', () => {
+          const sid = row.getAttribute('data-sid');
+          if (sid && bySession.has(sid)) {
+            state.selected = sid;
+            vscode.setState(state);
+            renderAll();
+          }
+        });
+      });
+    }
+
+    /** Render activity heatmap: 7 days × 24 hours grid, color intensity by event count. */
+    function updateHeatmap() {
+      const grid = document.getElementById('heatmap-grid');
+      if (!grid) return;
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const HOUR_MS = 3600_000;
+      const DAY_MS = 86_400_000;
+      // Bin events by (dayOffset 0..6, hour 0..23). dayOffset 0 = today.
+      const bins = new Array(7).fill(0).map(() => new Array(24).fill(0));
+      for (const evts of bySession.values()) {
+        for (const e of evts) {
+          if (!e.ts) continue;
+          const dayOff = Math.floor((todayStart + DAY_MS - e.ts) / DAY_MS);
+          if (dayOff < 0 || dayOff >= 7) continue;
+          const dt = new Date(e.ts);
+          const hr = dt.getHours();
+          bins[6 - dayOff][hr]++;   // row 0 = oldest (6d ago), row 6 = today
+        }
+      }
+      // Compute max for normalization
+      let maxN = 0;
+      for (const row of bins) for (const n of row) if (n > maxN) maxN = n;
+      const levelOf = (n) => {
+        if (n === 0) return '0';
+        if (maxN <= 1) return '4';
+        const t = n / maxN;
+        if (t > 0.66) return '4';
+        if (t > 0.33) return '3';
+        if (t > 0.10) return '2';
+        return '1';
+      };
+      // Build grid: corner + 24 hour labels + 7×(day label + 24 cells)
+      const html = [];
+      const dayLabel = (off) => {
+        const d = new Date(todayStart - off * DAY_MS);
+        return d.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 2);
+      };
+      html.push('<span class="hg-corner"></span>');
+      for (let h = 0; h < 24; h++) {
+        html.push('<span class="hg-hour-lbl">' + (h % 6 === 0 ? h : '') + '</span>');
+      }
+      for (let row = 0; row < 7; row++) {
+        const dayOff = 6 - row;
+        html.push('<span class="hg-day-lbl">' + dayLabel(dayOff) + '</span>');
+        for (let h = 0; h < 24; h++) {
+          const n = bins[row][h];
+          html.push('<span class="hg-cell" data-l="' + levelOf(n) + '" title="' + dayLabel(dayOff) + ' ' + h + ':00 — ' + n + ' events"></span>');
+        }
+      }
+      grid.innerHTML = html.join('');
+    }
+
+    /** Update the top daily-summary strip. Aggregates "today" (last 24h):
+     *  total cost (sum of usage for sessions active in last 24h), session count,
+     *  live count, and the busiest project by event count. */
+    function updateDailyStrip() {
+      const now = Date.now();
+      const DAY_MS = 24 * 60 * 60 * 1000;
+      const todayStart = now - DAY_MS;
+      let totalCost = 0, totalTok = 0, sessCount = 0, liveCount = 0;
+      const projEvents = new Map();
+      for (const [sid, meta] of sessionMeta.entries()) {
+        const evts = bySession.get(sid) || [];
+        const todayEvts = evts.filter(e => (e.ts || 0) >= todayStart);
+        if (todayEvts.length === 0) continue;
+        sessCount++;
+        if (now - (meta.lastTs || 0) < 5 * 60 * 1000) liveCount++;
+        const u = SESSION_USAGE[sid];
+        if (u) {
+          totalCost += u.cost || 0;
+          totalTok  += (u.input || 0) + (u.output || 0) + (u.cacheCreate || 0) + (u.cacheRead || 0);
+        }
+        const proj = sessionProject(meta);
+        const projKey = (proj === '~' || proj === '__cross__' || proj === '(no cwd)' || proj === '(pending)')
+          ? '📁 projects' : proj;
+        projEvents.set(projKey, (projEvents.get(projKey) || 0) + todayEvts.length);
+      }
+      // Top project by today's event count
+      let topProj = '—', topProjEvents = 0;
+      for (const [k, n] of projEvents) {
+        if (n > topProjEvents) { topProj = k; topProjEvents = n; }
+      }
+      const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+      const today = new Date();
+      setText('ds-date', today.toLocaleDateString(undefined, { month: 'short', day: 'numeric', weekday: 'short' }));
+      setText('ds-cost', fmtCost(totalCost));
+      setText('ds-tok', fmtTok(totalTok) + ' tok');
+      setText('ds-sessions', sessCount);
+      setText('ds-active', liveCount);
+      setText('ds-top', topProjEvents > 0 ? `🏆 ${topProj} (${topProjEvents} events)` : '— quiet day —');
+    }
+
+    /** Test whether a session matches a (lowercased) search query.
+     *  Searches: title, project, sid, cwd, recent prompt text, recent tool names. */
+    function sessionMatchesSearch(sid, meta, q) {
+      if (!q) return true;
+      if (sid.toLowerCase().includes(q)) return true;
+      if (meta.title && meta.title.toLowerCase().includes(q)) return true;
+      if (meta.cwd && meta.cwd.toLowerCase().includes(q)) return true;
+      const proj = sessionProject(meta);
+      if (proj && proj.toLowerCase().includes(q)) return true;
+      // Scan last ~50 events for prompt text or tool name match
+      const events = bySession.get(sid) || [];
+      const start = Math.max(0, events.length - 50);
+      for (let i = start; i < events.length; i++) {
+        const e = events[i];
+        if (e.tool_name && e.tool_name.toLowerCase().includes(q)) return true;
+        if (e.prompt && e.prompt.toLowerCase().includes(q)) return true;
+      }
+      return false;
+    }
+
+    /** Pick a session's room key.
+     *  - If file/cwd votes are spread across 2+ projects (runner-up >= 30% of leader),
+     *    return '__cross__' (caller routes to 📁 projects hub).
+     *  - Otherwise return the leader's project name.
+     *  - Falls back to current cwd's projectName when no votes exist. */
+    function sessionProject(meta) {
+      if (!meta) return '(no cwd)';
+      if (meta.dominantProject) return meta.dominantProject;
+      if (meta.cwdFreq && meta.cwdFreq.size > 0) {
+        const sorted = [...meta.cwdFreq.entries()].sort((a, b) => b[1] - a[1]);
+        if (sorted.length >= 2 && sorted[1][1] / sorted[0][1] >= 0.3) {
+          meta.dominantProject = '__cross__';
+          return '__cross__';
+        }
+        meta.dominantProject = sorted[0][0];
+        return sorted[0][0];
+      }
+      return projectName(meta.cwd);
+    }
+
+    // Workspace anchors: the segment right after one of these = project root.
+    // Two-level cap — anything below `<anchor>/<project>/...` collapses to <project>,
+    // so a session that cd's deep into src/extension/media/... never gets reclassified.
+    const WORKSPACE_ANCHORS = new Set([
+      'projects', 'repos', 'workspace', 'workspaces'
+    ]);
+
+    /** Project-root-ish name: prefer two-level cap at workspace anchor; fall back to walk-up. */
+    function projectName(cwd) {
+      if (!cwd) return '(no cwd)';
+      const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
+      // Two-level cap: scan forward, stop at first workspace anchor and take next segment.
+      for (let i = 0; i < parts.length - 1; i++) {
+        const p = parts[i].toLowerCase();
+        if (WORKSPACE_ANCHORS.has(p)) {
+          const next = parts[i + 1];
+          // Guard: next segment shouldn't itself be another anchor or container
+          const nextL = next.toLowerCase();
+          if (!WORKSPACE_ANCHORS.has(nextL) && !CONTAINER_DIRS.has(nextL)) return next;
+        }
+      }
+      // Fallback: walk up from end, skipping generic/container/username segments.
+      const usernameIdxs = new Set();
+      for (let i = 0; i < parts.length - 1; i++) {
+        const p = parts[i].toLowerCase();
+        if (p === 'users' || p === 'home') usernameIdxs.add(i + 1);
+      }
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const p = parts[i].toLowerCase();
+        if (GENERIC_DIRS.has(p)) continue;
+        if (CONTAINER_DIRS.has(p)) continue;
+        if (usernameIdxs.has(i)) continue;
+        return parts[i];
+      }
+      return '~';
+    }
+
+    /** Display-friendly cwd: replace user home prefix with '~'. */
+    function displayCwd(cwd) {
+      if (!cwd) return '';
+      const norm = cwd.replace(/\\/g, '/');
+      return norm
+        .replace(/^[a-zA-Z]:\/users\/[^\/]+/i, '~')
+        .replace(/^\/users\/[^\/]+/i, '~')
+        .replace(/^\/home\/[^\/]+/i, '~');
+    }
+
+    function toolSummary(e) {
+      if (!e.tool_name) return e.prompt ? String(e.prompt).slice(0, 140) : '';
+      const inp = e.tool_input || {};
+      if (e.tool_name === 'Bash') return String(inp.command || '').slice(0, 140);
+      if (e.tool_name === 'Read') return String(inp.file_path || '').slice(-90);
+      if (e.tool_name === 'Edit' || e.tool_name === 'Write' || e.tool_name === 'MultiEdit') return String(inp.file_path || '').slice(-90);
+      if (e.tool_name === 'Grep') return String(inp.pattern || '').slice(0, 90);
+      if (e.tool_name === 'Glob') return String(inp.pattern || '').slice(0, 90);
+      if (e.tool_name === 'WebFetch') return String(inp.url || '').slice(0, 90);
+      if (e.tool_name === 'WebSearch') return String(inp.query || '').slice(0, 90);
+      if (e.tool_name === 'Agent' || e.tool_name === 'Task') return String(inp.description || inp.prompt || '').slice(0, 110);
+      return e.tool_name;
+    }
+
+    function tsFmt(ms) {
+      return new Date(ms).toTimeString().slice(0, 8);
+    }
+
+    function timeAgo(ms) {
+      const diff = Date.now() - ms;
+      if (diff < 10_000) return 'now';
+      if (diff < 60_000) return Math.floor(diff / 1000) + 's';
+      if (diff < 3600_000) return Math.floor(diff / 60_000) + 'm';
+      if (diff < 86400_000) return Math.floor(diff / 3600_000) + 'h';
+      const days = Math.floor(diff / 86400_000);
+      if (days < 30) return days + 'd';
+      const months = Math.floor(days / 30);
+      if (months < 12) return months + 'mo';
+      return Math.floor(days / 365) + 'y';
+    }
+
+    function coldClass(ms) {
+      const diff = Date.now() - ms;
+      if (diff < 120_000) return 'active';      // <2min: bright
+      if (diff < 3600_000) return 'warm';       // <1h: normal
+      if (diff < 86400_000) return 'cool';      // <1d: dimmed
+      return 'cold';                            // older: heavily dimmed
+    }
+
+    /**
+     * Map tool (or 'thinking') to a CSS class that changes:
+     *   - sprite row (down=0 / up=1 / right=2)
+     *   - animation speed / mode (walking vs idle)
+     * Paired with CSS rules below.
+     */
+    function toolActionClass(tool) {
+      if (!tool || tool === 'thinking') return 'action-thinking';
+      if (tool === 'Bash') return 'action-coding';
+      if (tool === 'Write' || tool === 'Edit' || tool === 'MultiEdit' || tool === 'NotebookEdit') return 'action-writing';
+      if (tool === 'Read' || tool === 'Grep' || tool === 'Glob') return 'action-reading';
+      if (tool === 'WebFetch' || tool === 'WebSearch') return 'action-web';
+      if (tool === 'Agent' || tool === 'Task') return 'action-delegating';
+      if (tool === 'TodoWrite') return 'action-planning';
+      return 'action-thinking';
+    }
+    /** Short CSS-class suffix for the sidebar activity strip color. */
+    function toolCssClass(tool) {
+      if (tool === 'Prompt') return 'prompt';
+      if (tool === 'Bash') return 'bash';
+      if (tool === 'Write' || tool === 'Edit' || tool === 'MultiEdit' || tool === 'NotebookEdit') return 'edit';
+      if (tool === 'Read' || tool === 'Grep' || tool === 'Glob') return 'read';
+      if (tool === 'WebFetch' || tool === 'WebSearch') return 'web';
+      if (tool === 'Agent' || tool === 'Task') return 'agent';
+      if (tool === 'TodoWrite') return 'plan';
+      return 'other';
+    }
+
+    function ingest(e) {
+      const sid = e.session_id || 'unknown';
+      if (!bySession.has(sid)) bySession.set(sid, []);
+      bySession.get(sid).push(e);
+      let meta = sessionMeta.get(sid);
+      if (!meta) {
+        meta = {
+          cwd: e.cwd,
+          cwdFreq: new Map(),       // projectName -> count, used to pick modal project
+          dominantProject: null,    // memoized projectName winner
+          title: e.session_title || null,
+          charIdx: hashIdx(sid, SPRITES.length),
+          idleVariant: hashIdx(sid + 'idle', 6),   // 0 coffee | 1 think | 2 Z sleep | 3 stretch | 4 phone | 5 wave
+          lastTool: null,
+          busy: false,
+          waiting: false,
+          firstTs: e.ts,
+          lastTs: e.ts,
+          strip: [],
+          parentSessionId: e.parent_session_id || null,
+          isSubagent: !!e.is_subagent,
+          agentName: e.agent_name || null,
+        };
+        sessionMeta.set(sid, meta);
+      }
+      if (e.cwd) meta.cwd = e.cwd;
+
+      // Project-attribution voting: count file operations under each project.
+      // Weights:
+      //   Edit/Write/MultiEdit/NotebookEdit = 5 (the user is MODIFYING this project)
+      //   Read                              = 1
+      //   Grep/Glob (search)                = 0.5
+      //   cwd (no file path)                = 0.2  (weak signal)
+      const _addVote = (path, weight) => {
+        if (!path || !weight) return;
+        const proj = projectName(path);
+        if (proj && proj !== '~' && proj !== '(no cwd)' && proj !== '(pending)') {
+          meta.cwdFreq.set(proj, (meta.cwdFreq.get(proj) || 0) + weight);
+          meta.dominantProject = null;
+        }
+      };
+      // 1. cwd vote — weak (covers sessions that don't touch files yet)
+      if (e.cwd) _addVote(e.cwd, 0.2);
+      // 2. file-path vote from tool_input — strong, weighted by tool kind
+      if (e.hook_event_name === 'PreToolUse' && e.tool_input) {
+        const fp = e.tool_input.file_path || e.tool_input.path;
+        const weight = (e.tool_name === 'Edit' || e.tool_name === 'Write' ||
+                        e.tool_name === 'MultiEdit' || e.tool_name === 'NotebookEdit') ? 5
+                     : e.tool_name === 'Read' ? 1
+                     : (e.tool_name === 'Grep' || e.tool_name === 'Glob') ? 0.5
+                     : 0;
+        _addVote(fp, weight);
+      }
+      if (e.session_title) meta.title = e.session_title;
+      if (e.parent_session_id) { meta.parentSessionId = e.parent_session_id; meta.isSubagent = true; }
+      meta.lastTs = e.ts;
+      meta.strip.push(e.hook_event_name || '?');
+      while (meta.strip.length > STRIP_LEN) meta.strip.shift();
+      // Also record a tool-aware timeline for the GitHub-style activity strip:
+      // (ts, tool) — used to color-bin recent activity by tool.
+      if (!meta.toolTimeline) meta.toolTimeline = [];
+      if (e.hook_event_name === 'PreToolUse' && e.tool_name) {
+        meta.toolTimeline.push({ ts: e.ts, tool: e.tool_name });
+      } else if (e.hook_event_name === 'UserPromptSubmit') {
+        meta.toolTimeline.push({ ts: e.ts, tool: 'Prompt' });
+      }
+      // Keep up to 24h of tool events (bounded by max length 2000 to guard memory).
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      while (meta.toolTimeline.length > 0 && meta.toolTimeline[0].ts < cutoff) meta.toolTimeline.shift();
+      if (meta.toolTimeline.length > 2000) meta.toolTimeline.splice(0, meta.toolTimeline.length - 2000);
+      // State machine — agent is BUSY for the whole turn (prompt → stop),
+      // not just during tool calls. Between PreTool/PostTool pairs Claude is still
+      // "thinking" (planning next step, API streaming), so should look busy.
+      if (e.hook_event_name === 'UserPromptSubmit') { meta.busy = true; meta.waiting = false; meta.monitoring = false; meta.lastTool = 'thinking'; }
+      if (e.hook_event_name === 'PreToolUse') {
+        meta.busy = true; meta.lastTool = e.tool_name; meta.waiting = false; meta.monitoring = false;
+        // Track bg-shell activity: Bash tools launched with run_in_background=true
+        // or any BashOutput polling → mark session as having active bg work.
+        const isBgStart = e.tool_name === 'Bash' && e.tool_input?.run_in_background === true;
+        const isBgPoll  = e.tool_name === 'BashOutput' || e.tool_name === 'KillShell';
+        if (isBgStart || isBgPoll) meta.lastBgShellTs = e.ts;
+      }
+      if (e.hook_event_name === 'PostToolUse') { /* keep busy=true; Claude still processing next step */ meta.lastTool = 'thinking'; }
+      // Notification routing:
+      //   - busy session → ignore (shown as busy already)
+      //   - session with recent bg-shell activity (<5 min) → MONITORING (waiting on bg process, not user)
+      //   - otherwise → WAITING (genuine user-input prompt)
+      if (e.hook_event_name === 'Notification' && !meta.busy) {
+        const bgRecent = meta.lastBgShellTs && (e.ts - meta.lastBgShellTs) < 5 * 60 * 1000;
+        if (bgRecent) meta.monitoring = true;
+        else meta.waiting = true;
+      }
+      // Stop clears all active flags (session turn ended).
+      if (e.hook_event_name === 'Stop') { meta.busy = false; meta.waiting = false; meta.monitoring = false; meta.lastTool = null; }
+    }
+
+    // In-place update cache — re-rendering the whole list on every event caused
+    // CSS animations to restart → visible flicker. Cache card nodes per session_id
+    // and only update mutable fields when meta changes.
+    const sessionCards = new Map(); // sid -> { node, lastSig }
+    let renderSidebarPending = false;
+
+    function renderSidebarThrottled() {
+      if (renderSidebarPending) return;
+      renderSidebarPending = true;
+      setTimeout(() => { renderSidebarPending = false; renderSidebar(); }, 150);
+    }
+
+    function renderSidebar() {
+      const container = document.getElementById('sessions');
+      const sids = Array.from(bySession.keys());
+      document.getElementById('session-count').textContent = sids.length;
+      const totalEvents = Array.from(bySession.values()).reduce((s, a) => s + a.length, 0);
+      document.getElementById('event-count').textContent = totalEvents + ' events';
+      // Age buckets: live=<5min, hour=<1h, day=<1d, week=<7d, older=>7d
+      const now = Date.now();
+      let live = 0, hr = 0, day = 0, week = 0, older = 0;
+      for (const m of sessionMeta.values()) {
+        const age = now - (m.lastTs || 0);
+        if (age < 300_000) live++;
+        else if (age < 3_600_000) hr++;
+        else if (age < 86_400_000) day++;
+        else if (age < 604_800_000) week++;
+        else older++;
+      }
+      document.getElementById('agent-stats').textContent = sids.length + ' agents · ' + live + ' live';
+      document.getElementById('age-breakdown').textContent =
+        '🟢 ' + live + ' live · 🟡 ' + hr + ' 1h · 🔵 ' + day + ' 1d · ⚫ ' + week + ' 7d · 💤 ' + older + ' older';
+      // Aggregate cost/tokens across all visible sessions (API-equivalent for reference)
+      let totCost = 0, totTok = 0, totMsg = 0;
+      for (const sid of sids) {
+        const u = SESSION_USAGE[sid];
+        if (!u) continue;
+        totCost += u.cost || 0;
+        totTok  += (u.input || 0) + (u.output || 0) + (u.cacheCreate || 0) + (u.cacheRead || 0);
+        totMsg  += u.msgCount || 0;
+      }
+      const ce = document.getElementById('event-count');
+      if (totCost > 0) {
+        ce.textContent = totalEvents + ' events · ' + fmtCost(totCost) + ' (API equiv) · ' + fmtTok(totTok) + ' tok · ' + totMsg + ' msgs';
+      } else {
+        ce.textContent = totalEvents + ' events';
+      }
+
+      // Daily summary strip — aggregate sessions touched today, top busy project, live count
+      try { updateDailyStrip(); } catch (e) {}
+      try { updateHeatmap(); } catch (e) {}
+
+      if (sids.length === 0) {
+        // Clear cached cards when transitioning to empty
+        for (const entry of sessionCards.values()) entry.node.remove();
+        sessionCards.clear();
+        container.innerHTML = '<div class="empty" style="font-size: 11px;">No active sessions.</div>';
+        return;
+      }
+      // Remove any empty placeholder from previous render
+      const emptyEl = container.querySelector('.empty');
+      if (emptyEl) emptyEl.remove();
+      const THREE_DAYS = 3 * 86400_000;
+      const hideOld = !!state.hideOld;
+      // Group: top-level sessions sorted by lastTs, each followed by its subagents
+      const parents = sids.filter(s => !sessionMeta.get(s)?.isSubagent);
+      const childrenOf = new Map();
+      for (const s of sids) {
+        const m = sessionMeta.get(s);
+        if (m && m.isSubagent && m.parentSessionId) {
+          if (!childrenOf.has(m.parentSessionId)) childrenOf.set(m.parentSessionId, []);
+          childrenOf.get(m.parentSessionId).push(s);
+        }
+      }
+      parents.sort((a, b) => (sessionMeta.get(b)?.lastTs || 0) - (sessionMeta.get(a)?.lastTs || 0));
+      const orderedSids = [];
+      for (const p of parents) {
+        orderedSids.push(p);
+        const kids = (childrenOf.get(p) || []).sort((a, b) => (sessionMeta.get(a)?.firstTs || 0) - (sessionMeta.get(b)?.firstTs || 0));
+        for (const k of kids) orderedSids.push(k);
+      }
+      // Include any orphan subagents at bottom
+      for (const s of sids) if (!orderedSids.includes(s)) orderedSids.push(s);
+
+      // Build the desired set of visible sids (respect hideOld filter + search)
+      const searchQ = (state.searchQuery || '').trim().toLowerCase();
+      const visibleSids = [];
+      for (const sid of orderedSids) {
+        const meta = sessionMeta.get(sid) || {};
+        const ageMs = Date.now() - (meta.lastTs || 0);
+        if (hideOld && ageMs > THREE_DAYS) continue;
+        // Hide sessions whose cwd hasn't resolved to a real project yet
+        // (e.g. first hook event fires before user cd's into a subproject).
+        // These produce ghost "projects" cards that vanish on refresh.
+        if (!meta.title && projectName(meta.cwd) === '(pending)') continue;
+        if (searchQ && !sessionMatchesSearch(sid, meta, searchQ)) continue;
+        visibleSids.push(sid);
+      }
+
+      // Remove cards no longer visible
+      for (const [sid, entry] of Array.from(sessionCards.entries())) {
+        if (!visibleSids.includes(sid)) {
+          entry.node.remove();
+          sessionCards.delete(sid);
+        }
+      }
+
+      // Upsert cards; preserve order
+      let prevNode = null;
+      for (const sid of visibleSids) {
+        const meta = sessionMeta.get(sid) || {};
+        const stateCls = meta.monitoring ? 'monitoring' : meta.waiting ? 'waiting' : (meta.busy ? 'busy' : 'idle');
+        const title = meta.title || sessionProject(meta);
+        const subtitle = sid.slice(0, 8) + ' · ' + sessionProject(meta);
+        const statusTxt = meta.monitoring
+          ? 'monitoring bg shell…'
+          : meta.waiting
+            ? 'waiting for input'
+            : (meta.busy ? (meta.lastTool || 'working') + '…' : 'idle');
+        const actionEmoji = meta.monitoring ? '🔍'
+          : meta.waiting ? '🔔'
+          : (meta.busy ? (TOOL_EMOJI[meta.lastTool] || '⚡') : '💤');
+        // GitHub-graph style activity strip.
+        // 24 cells × 60-min bins = 24 hours of visible history.
+        const BIN_SEC = 60 * 60;
+        const now = Date.now();
+        const toolEvents = meta.toolTimeline || [];
+        const bins = new Array(STRIP_LEN).fill(null);
+        const binCounts = new Array(STRIP_LEN).fill(0);
+        for (const te of toolEvents) {
+          const binIdx = STRIP_LEN - 1 - Math.floor((now - te.ts) / 1000 / BIN_SEC);
+          if (binIdx < 0 || binIdx >= STRIP_LEN) continue;
+          // Prefer the most recent tool in the bin (latest wins)
+          if (!bins[binIdx] || (te.ts >= (bins[binIdx + '_ts'] || 0))) {
+            bins[binIdx] = te.tool;
+            bins[binIdx + '_ts'] = te.ts;
+          }
+          binCounts[binIdx]++;
+        }
+        const stripHtml = bins.map((tool, i) => {
+          if (!tool) return '<span class="empty" title="' + (STRIP_LEN - 1 - i) + 'h ago · no activity"></span>';
+          const hoursAgo = Math.round((now - (bins[i + '_ts'] || now)) / 3_600_000 * 10) / 10;
+          const title = tool + ' · ' + binCounts[i] + ' events · ' + hoursAgo + 'h ago';
+          return '<span class="tool-' + toolCssClass(tool) + '" title="' + title + '"></span>';
+        }).join('');
+
+        const cold = coldClass(meta.lastTs || 0);
+        const ago = timeAgo(meta.lastTs || 0);
+        // Liveness: per-state timeout. Claude usually responds within 30s; longer silence = process likely dead.
+        // PostToolUse waits for next PreToolUse within ~60s; UserPromptSubmit waits for first tool within ~90s;
+        // PreToolUse may run a long tool up to ~180s before reporting; absolute ceiling 5min.
+        const silentMs = Date.now() - (meta.lastTs || 0);
+        const lastEvent = meta.strip && meta.strip[meta.strip.length - 1];
+        let staleThreshold = 300_000;
+        if (lastEvent === 'PostToolUse') staleThreshold = 60_000;
+        else if (lastEvent === 'UserPromptSubmit') staleThreshold = 90_000;
+        else if (lastEvent === 'PreToolUse') staleThreshold = 180_000;
+        const stale = silentMs > staleThreshold;
+        const longStale = silentMs > 24 * 60 * 60 * 1000; // >1 day → bed tier, matches floor plan
+        const effectiveStateCls = stale ? 'idle' : stateCls;
+        // 💤 only when actually in bed (long-stale). Sofa-sitting drops the action emoji silently.
+        const effectiveAction = longStale ? '💤' : (stale ? '' : actionEmoji);
+        const effectiveStatus = stale ? 'idle' : statusTxt;
+        const spriteUrl = SPRITES[meta.charIdx] || '';
+        const titlePrefix = meta.isSubagent ? '<span class="sub-prefix">└ </span>' : '';
+        const subTitleText = meta.isSubagent && meta.agentName ? 'subagent · ' + meta.agentName : subtitle;
+        const statusWithAgo = effectiveStateCls === 'idle' ? ('idle · ' + ago + ' ago') : (effectiveStatus + ' · ' + ago);
+        const actionCls = stale ? '' : toolActionClass(meta.lastTool);
+        const tierCls = longStale ? 'long-stale' : (stale ? 'stale' : '');
+        // Idle variant: stable per-session rotation through 4 styles (coffee/think/sleep/stretch)
+        const idleVariantCls = effectiveStateCls === 'idle' ? ('idle-v' + (meta.idleVariant ?? 2)) : '';
+        const sessionCls = 'session ' + effectiveStateCls + ' ' + cold + ' ' + tierCls +
+          (sid === state.selected ? ' active' : '') + (meta.isSubagent ? ' subagent' : '');
+        const avatarCls = 'avatar avatar-host ' + effectiveStateCls + ' ' + tierCls;
+        // Inner room-char classes (same semantics as floor plan) — drives sofa/bed/desk.
+        const roomCharCls = 'room-char sidebar-char' + (tierCls ? ' ' + tierCls : '') + (sid === state.selected ? ' selected' : '') + (meta.monitoring ? ' monitoring' : '');
+        const pixelCls = 'pixel' + (meta.monitoring ? ' monitoring' : effectiveStateCls === 'busy' ? ' busy' : effectiveStateCls === 'waiting' ? ' waiting' : '');
+        const badgeText = longStale || (stale && !longStale) ? '' /* bed/sofa visual already conveys sleep */
+          : (meta.monitoring ? '🔍' : meta.waiting ? '🔔' : meta.busy ? '⚡' : '');
+        // Token/cost badge: shows cumulative usage from JSONL transcript.
+        const usage = SESSION_USAGE[sid];
+        let costBadge = '';
+        let costTitle = '';
+        if (usage && usage.cost > 0) {
+          const totalTok = usage.input + usage.output + usage.cacheCreate + usage.cacheRead;
+          // <span class="coin"></span> is a CSS-styled SVG coin (see .info .cost-badge .coin)
+          costBadge = fmtCost(usage.cost) + ' <span class="coin"></span>' + fmtTok(totalTok);
+          costTitle = 'API-equivalent cost (Max/Pro subscribers pay flat): $' + usage.cost.toFixed(2) +
+            '\\ninput: ' + usage.input.toLocaleString() +
+            '\\noutput: ' + usage.output.toLocaleString() +
+            '\\ncache write: ' + usage.cacheCreate.toLocaleString() +
+            '\\ncache read: ' + usage.cacheRead.toLocaleString() +
+            '\\nmsgs: ' + usage.msgCount +
+            '\\nmodels: ' + (usage.models || []).join(', ');
+        }
+        // Signature captures fields that require DOM mutation. If unchanged, skip entirely.
+        const sig = [sessionCls, avatarCls, effectiveAction, title, subTitleText, statusWithAgo, stripHtml, costBadge].join('|');
+
+        let entry = sessionCards.get(sid);
+        if (!entry) {
+          // First time: create the card DOM
+          const div = document.createElement('div');
+          div.dataset.sid = sid;
+          // Sidebar avatar uses the SAME .room-char structure as the floor plan —
+          // same sofa/bed/desk visuals, driven by the same CSS variables.
+          div.innerHTML =
+            '<div class="avatar avatar-host">' +
+              '<div class="room-char sidebar-char" style="--sprite-url:url(&quot;' + spriteUrl + '&quot;)">' +
+                '<div class="pixel"></div>' +
+                '<div class="desk-item"></div>' +
+                '<div class="char-badge"></div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="info">' +
+              '<div class="title"></div>' +
+              '<div class="subtitle"></div>' +
+              '<div class="status-line"><span class="dot"></span><span class="status-txt"></span></div>' +
+              '<div class="strip"></div>' +
+              '<div class="cost-badge" title=""></div>' +
+            '</div>' +
+            '<div class="gear-btn" title="Agent options">⚙</div>' +
+            '<div class="gear-menu">' +
+              '<div class="gear-menu-item danger" data-action="delete">🗑 Delete agent…</div>' +
+            '</div>';
+          div.onclick = () => { state.selected = sid; vscode.setState(state); renderAll(); };
+          const gearBtn = div.querySelector('.gear-btn');
+          const gearMenu = div.querySelector('.gear-menu');
+          gearBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            document.querySelectorAll('.gear-menu.open').forEach(m => { if (m !== gearMenu) m.classList.remove('open'); });
+            gearMenu.classList.toggle('open');
+          });
+          gearMenu.addEventListener('click', (ev) => { ev.stopPropagation(); });
+          div.querySelectorAll('.gear-menu-item').forEach(item => {
+            item.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              gearMenu.classList.remove('open');
+              const action = ev.currentTarget.dataset.action;
+              if (action === 'delete') openDeleteModal(sid);
+            });
+          });
+          entry = { node: div, lastSig: '' };
+          sessionCards.set(sid, entry);
+        }
+
+        // Ensure card is in correct DOM position (after prevNode)
+        const target = prevNode ? prevNode.nextSibling : container.firstChild;
+        if (entry.node !== target) container.insertBefore(entry.node, target);
+
+        // Only mutate DOM if signature changed (avoids animation restart)
+        if (sig !== entry.lastSig) {
+          const div = entry.node;
+          div.className = sessionCls;
+          const avatar = div.querySelector('.avatar');
+          if (avatar.className !== avatarCls) avatar.className = avatarCls;
+          // Update inner room-char (reused from floor plan) classes
+          const rc = div.querySelector('.room-char');
+          if (rc && rc.className !== roomCharCls) rc.className = roomCharCls;
+          const px = div.querySelector('.pixel');
+          if (px && px.className !== pixelCls) px.className = pixelCls;
+          const cbInner = div.querySelector('.char-badge');
+          if (cbInner && cbInner.textContent !== badgeText) cbInner.textContent = badgeText;
+          div.querySelector('.action-badge')?.remove?.(); /* legacy — removed by refactor */
+          div.querySelector('.title').innerHTML = titlePrefix + title;
+          div.querySelector('.title').setAttribute('title', title);
+          div.querySelector('.subtitle').textContent = subTitleText;
+          div.querySelector('.subtitle').setAttribute('title', meta.cwd || '');
+          div.querySelector('.status-txt').textContent = statusWithAgo;
+          div.querySelector('.strip').innerHTML = stripHtml;
+          const cb = div.querySelector('.cost-badge');
+          if (costBadge) {
+            cb.innerHTML = costBadge;  // contains <span class="coin"></span>
+            cb.setAttribute('title', costTitle);
+            cb.style.display = '';
+          } else {
+            cb.style.display = 'none';
+          }
+          entry.lastSig = sig;
+        }
+        prevNode = entry.node;
+      }
+    }
+
+    /** Sweep zombie state flags from sessions whose last event was >1h ago.
+     *  JSONL replay can leave busy/waiting/monitoring stuck true when the session
+     *  ended without a matching Stop event. After 1h, treat as no-state. */
+    const ZOMBIE_MS = 60 * 60 * 1000;
+    function sweepZombieStates() {
+      const now = Date.now();
+      for (const meta of sessionMeta.values()) {
+        if (now - (meta.lastTs || 0) > ZOMBIE_MS) {
+          meta.busy = false;
+          meta.waiting = false;
+          meta.monitoring = false;
+          meta.lastTool = null;
+        }
+      }
+    }
+
+    /** Render all project rooms in the floor plan, each with its characters. */
+    function renderFloorPlan() {
+      const plan = document.getElementById('floor-plan');
+      if (!plan) return;
+      sweepZombieStates();
+      const sids = Array.from(bySession.keys());
+      if (sids.length === 0) {
+        plan.innerHTML = '<div class="floor-plan-empty empty"><p>Waiting for Claude Code sessions.</p>' +
+          '<p>Run <code>Agents Viz: Configure Claude Code Hooks</code><br>from the command palette, then start a Claude Code session.</p></div>';
+        return;
+      }
+      // Routing:
+      //   1. file/cwd votes spread across 2+ projects (cross-project session) →
+      //      📁 projects hub
+      //   2. clear single-project leader → its own room
+      //   3. cwd at workspace root, no votes → 📁 projects hub
+      //   4. no cwd / pending → Lounge
+      const LOUNGE = '__lounge__';
+      const PROJECTS_HUB = '__projects_hub__';
+      const groups = new Map();
+      for (const sid of sids) {
+        const meta = sessionMeta.get(sid);
+        if (!meta) continue;
+        const proj = sessionProject(meta);
+        let key;
+        if (proj === '(no cwd)' || proj === '(pending)')   key = LOUNGE;
+        else if (proj === '~' || proj === '__cross__')     key = PROJECTS_HUB;
+        else                                               key = proj;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push({ sid, meta });
+      }
+      // Sort rooms by:
+      //   1. active session count — DESC (active = event in last 24h, filters truly-cold sessions)
+      //   2. when both rooms have 0 active: latest lastTs — DESC (recently-touched first)
+      //   3. total session count — DESC
+      //   4. project name — ASC
+      // Lounge always last.
+      const STALE_MS_SORT = 24 * 60 * 60 * 1000;
+      const roomStats = (key) => {
+        const list = groups.get(key) || [];
+        let active = 0, latest = 0;
+        for (const { meta } of list) {
+          const ts = meta.lastTs || 0;
+          if (ts > latest) latest = ts;
+          if (Date.now() - ts <= STALE_MS_SORT) active++;
+        }
+        return { active, latest, total: list.length };
+      };
+      const roomKeys = Array.from(groups.keys())
+        .filter(k => k !== LOUNGE)
+        .sort((a, b) => {
+          const sa = roomStats(a), sb = roomStats(b);
+          if (sb.active !== sa.active) return sb.active - sa.active;
+          // Both rooms have 0 active → prefer the more recently touched one.
+          if (sa.active === 0 && sb.active === 0 && sb.latest !== sa.latest) {
+            return sb.latest - sa.latest;
+          }
+          if (sb.total !== sa.total) return sb.total - sa.total;
+          return a.toLowerCase().localeCompare(b.toLowerCase());
+        });
+      if (groups.has(LOUNGE)) roomKeys.push(LOUNGE);
+
+      plan.innerHTML = '';
+      for (const key of roomKeys) {
+        const chars = groups.get(key);
+        const isLounge = key === LOUNGE;
+        const room = document.createElement('div');
+        room.className = 'room' + (isLounge ? ' room-lounge' : '');
+        // Room sizing formula (per-occupant footprint × rectangular pack):
+        //   1. Work area = awake × CHAR_W × CHAR_H, packed in a near-square rectangle
+        //   2. Bedroom   = pods  × POD_W  × POD_H,  packed in a vertical-leaning rectangle
+        //   3. Room height = max(work_h, pod_h) / FLOOR_FRAC + wall_pad
+        //   4. Room width  = work_w + pod_w + gap_between + side_pad
+        // Both work and bedroom are ABSOLUTE-positioned so they don't push room dims
+        // beyond what we set; we set room width/height explicitly.
+        const _now = Date.now();
+        let podCnt = 0, awakeCnt = 0;
+        for (const { meta } of chars) {
+          if (_now - (meta.lastTs || 0) > 24 * 60 * 60 * 1000) podCnt++;
+          else awakeCnt++;
+        }
+        // Layout constants. ALL room edges + slot paddings included so flex math
+        // matches what the browser actually does.
+        //   CHAR_BOX = .room-char.stale flex width 60 + sofa armrest visual 20 + 8px buffer → 88
+        //              (the 8px buffer prevents sub-pixel rounding causing flex to wrap to fewer cols)
+        //   POD_BOX  = .room-char.long-stale 50 + 8 buffer → 58
+        //   GAP      = .room-slots flex column gap = 18
+        const CHAR_BOX = 88, CHAR_H = 70;
+        const POD_BOX  = 58, POD_H  = 100;
+        const ROW_GAP  = 18;
+        // Internal paddings (must add to room.width or items wrap).
+        //   SLOT_INSET   = .room-slots left:12 + right:12 = 24
+        //   SLOT_PAD_X   = .room-slots padding-left:18 + padding-right:18 = 36
+        const SLOT_INSET = 24;
+        const SLOT_PAD_X = 36;
+        const WALL_H     = 110;
+        const FLOOR_PAD  = 28;
+        const SIDE_PAD   = 0;          // already included via SLOT_INSET
+        const ZONE_GAP   = 12;
+
+        // Lay awake chars in a wider-than-tall rectangle (aspect 2.0 = strongly horizontal).
+        function packGrid(n, aspect) {
+          if (n <= 0) return { rows: 0, cols: 0 };
+          const cols = Math.max(1, Math.round(Math.sqrt(n * aspect)));
+          return { rows: Math.ceil(n / cols), cols };
+        }
+        const workGrid = packGrid(awakeCnt, 2.0);   // 6 → 3×2, 12 → 5×3, 4 → 3×2
+        const podGrid  = packGrid(podCnt,   2.0);   // 6 → 3×2, 4 → 3×2 (same horizontal preference)
+
+        // Bedroom flex gaps and paddings (must match CSS exactly)
+        const POD_COL_GAP   = 10;
+        const POD_ROW_GAP   = 28;     // matches CSS gap: 28px for pod stacks (covers name + salary above next)
+        const BEDROOM_INSET = 24;     // .room-bedroom left:12 + right:12 + (room edge buffer)... actually right:12 only; using 24 below as outer buffer for pad calc
+        const BEDROOM_PAD_X = 28;     // 14 left + 14 right (inner padding)
+        const BEDROOM_PAD_Y = 30;     // 14 top + 16 bottom
+        const SLOT_PAD_Y    = 14;     // 6 top + 8 bottom
+
+        const workInner = workGrid.cols > 0
+          ? workGrid.cols * CHAR_BOX + (workGrid.cols - 1) * ROW_GAP
+          : 0;
+        const podInnerW = podGrid.cols > 0
+          ? podGrid.cols * POD_BOX + (podGrid.cols - 1) * POD_COL_GAP
+          : 0;
+        const podInnerH = podGrid.rows > 0
+          ? podGrid.rows * POD_H + (podGrid.rows - 1) * POD_ROW_GAP
+          : 0;
+        const workInnerH = workGrid.rows > 0
+          ? workGrid.rows * CHAR_H + (workGrid.rows - 1) * 14   /* row gap in slots */
+          : 0;
+        // Per-zone OUTER box (content + zone's own padding).
+        const workBoxW = workInner > 0 ? workInner + SLOT_PAD_X    : 0;  // workInner + 36
+        const podBoxW  = podInnerW > 0 ? podInnerW + BEDROOM_PAD_X : 0;  // podInnerW + 28
+        const workH = workInnerH > 0 ? workInnerH + SLOT_PAD_Y    : 0;
+        const podH  = podInnerH  > 0 ? podInnerH  + BEDROOM_PAD_Y : 0;
+
+        // Room layout: 12px left margin + work box + 12 gap + bedroom box + 12 right margin
+        // Each section omitted if empty.
+        const ROOM_EDGE_PAD = 12;
+        let roomW = ROOM_EDGE_PAD;
+        if (workBoxW > 0) roomW += workBoxW;
+        if (workBoxW > 0 && podBoxW > 0) roomW += ZONE_GAP;
+        if (podBoxW  > 0) roomW += podBoxW;
+        roomW += ROOM_EDGE_PAD;
+
+        // Room height
+        const floorH   = Math.max(workH, podH) + FLOOR_PAD;
+        const roomH    = WALL_H + floorH;
+        const podZoneW = podBoxW;       // alias used below for the CSS variable
+
+        // Project title sets a lower bound on room width — whiteboard must fit it
+        // without ellipsis. Rough: 8px per char at 13px bold + 60px for whiteboard
+        // padding + wall border + room border. Use longest line ('☕ Lounge' for lounge).
+        const _projLabel = isLounge ? '☕ Lounge' : key;
+        const titleMinW = _projLabel.length * 8 + 60;
+        const finalW = Math.max(180, titleMinW, Math.min(1100, roomW));
+        const finalH = Math.max(200, Math.min(680, roomH));
+        room.style.width = finalW + 'px';
+        room.style.minHeight = finalH + 'px';
+        room.style.setProperty('--bedroom-w', podZoneW > 0 ? podZoneW + 'px' : '0px');
+        // slot's right CSS = room right pad (12) + bedroom box + gap (12) when bedroom present
+        const workzoneRight = podZoneW > 0 ? (ROOM_EDGE_PAD + podZoneW + ZONE_GAP) : ROOM_EDGE_PAD;
+        room.style.setProperty('--workzone-right', workzoneRight + 'px');
+        // Back wall + whiteboard
+        const wall = document.createElement('div');
+        wall.className = 'room-wall';
+        const wbKey = (isLounge ? 'lounge' : key).toLowerCase();
+        if (ROOM_IMAGES[wbKey]) {
+          wall.style.backgroundImage = 'url("' + ROOM_IMAGES[wbKey] + '")';
+        } else {
+          const h = hashIdx(wbKey, 360);
+          wall.style.backgroundImage =
+            'linear-gradient(135deg, hsl(' + h + ', 45%, 28%), hsl(' + ((h + 40) % 360) + ', 50%, 15%))';
+        }
+        const isHub = key === PROJECTS_HUB;
+        const projectLabel = isLounge ? '☕ Lounge' : isHub ? '📁 projects' : key;
+        const sampleCwd = isLounge
+          ? chars.length + ' idle agents'
+          : isHub
+            ? chars.length + ' workspace-root sessions'
+            : displayCwd(chars[0].meta.cwd || '');
+        // Room-level total: sum of all sessions' lifetime cost (incl. ones we've seen).
+        // TODO: persist deleted-session contributions in extension-side storage so the
+        // tally survives session deletion / panel reopen.
+        let roomCost = 0, roomTok = 0;
+        for (const { sid } of chars) {
+          const u = SESSION_USAGE[sid];
+          if (!u) continue;
+          roomCost += u.cost || 0;
+          roomTok  += (u.input || 0) + (u.output || 0) + (u.cacheCreate || 0) + (u.cacheRead || 0);
+        }
+        const totalBadge = roomCost >= 0.01
+          ? '<div class="wb-total" title="' + chars.length + ' sessions · ' + fmtTok(roomTok) + ' tok">💰 ' + fmtCost(roomCost) + ' · ' + chars.length + ' sess</div>'
+          : '<div class="wb-total" style="opacity:0.5">' + chars.length + ' sess</div>';
+        // Insert <wbr> after each "/" so the browser prefers to wrap at path
+        // separators rather than mid-word. Underscore and hyphen also get hints.
+        const cwdWithBreaks = escapeHtml(sampleCwd)
+          .replace(/\//g, '/<wbr>')
+          .replace(/(?<=\w)([_-])(?=\w)/g, '$1<wbr>');
+        wall.innerHTML =
+          '<div class="whiteboard">' +
+            '<div class="wb-project">' + escapeHtml(projectLabel) + '</div>' +
+            '<div class="wb-sub">' + cwdWithBreaks + '</div>' +
+            totalBadge +
+          '</div>' +
+          (isLounge ? '' : '<div class="wall-clock"></div>');
+        room.appendChild(wall);
+        // Plants live at room level so they can extend across wall/floor line (corner decor)
+        const decor = document.createElement('div');
+        decor.className = 'room-decor';
+        decor.innerHTML =
+          '<div class="plant plant-left"></div>' +
+          '<div class="plant plant-right"></div>';
+        room.appendChild(decor);
+        // Floor
+        const floor = document.createElement('div');
+        floor.className = 'room-floor';
+        room.appendChild(floor);
+        // Two character zones inside the room:
+        //   .room-bedroom : long-stale (24h+) chars, dimmed, top of floor near back wall
+        //   .room-slots   : everyone else, working / sitting on sofa
+        const STALE_MS = 60 * 60 * 1000; // 1h -> sofa
+        const bedroom = document.createElement('div');
+        bedroom.className = 'room-bedroom';
+        const slots = document.createElement('div');
+        slots.className = 'room-slots';
+        // Stable order: by firstTs (session creation), never changes during session.
+        const sorted = chars.slice().sort((a, b) => {
+          return (a.meta.firstTs || 0) - (b.meta.firstTs || 0) || a.sid.localeCompare(b.sid);
+        });
+        const LONG_STALE_MS = 24 * 60 * 60 * 1000; // 1 day -> bed
+        for (const { sid, meta } of sorted) {
+          const age = Date.now() - (meta.lastTs || 0);
+          const stale = age > STALE_MS;
+          const longStale = age > LONG_STALE_MS;
+          const name = meta.title || sid.slice(0, 8);
+          // Common: last user prompt for hover preview
+          const evts = bySession.get(sid) || [];
+          let lastPrompt = '';
+          for (let i = evts.length - 1; i >= 0; i--) {
+            const ev = evts[i];
+            if (ev.hook_event_name === 'UserPromptSubmit' && ev.prompt) {
+              lastPrompt = String(ev.prompt).slice(0, 220);
+              break;
+            }
+          }
+          const tagTitle = name + ' · ' + sid + (lastPrompt ? '\n\n' + lastPrompt : '');
+          // Common: salary
+          const usage = SESSION_USAGE[sid];
+          let salaryHtml = '';
+          if (usage && (usage.cost > 0 || usage.input > 0 || usage.output > 0)) {
+            const totTok = (usage.input||0)+(usage.output||0)+(usage.cacheCreate||0)+(usage.cacheRead||0);
+            salaryHtml = '<div class="' + (longStale ? 'pod-salary' : 'char-salary') + '" title="' + fmtCost(usage.cost) + ' · ' + fmtTok(totTok) + ' tok">' + fmtCost(usage.cost) + '</div>';
+          }
+
+          let cDiv;
+          if (longStale) {
+            // ----- Sleep pod (separate DOM template, no .room-char overlap) -----
+            cDiv = document.createElement('div');
+            cDiv.dataset.sid = sid;
+            cDiv.className = 'pod-cell' + (sid === state.selected ? ' selected' : '');
+            cDiv.style.setProperty('--sprite-url', 'url("' + (SPRITES[meta.charIdx] || '') + '")');
+            cDiv.innerHTML =
+              '<div class="pod-shell"></div>' +
+              '<div class="pod-dome"></div>' +
+              '<div class="pod-head"></div>' +
+              '<div class="pod-pedestal"></div>' +
+              '<div class="pod-badge">💤</div>' +
+              salaryHtml +
+              '<div class="pod-name">' + escapeHtml(name) + '</div>';
+          } else {
+            // ----- Awake / sofa-stale char (existing room-char path) -----
+            cDiv = document.createElement('div');
+            cDiv.dataset.sid = sid;
+            cDiv.className = 'room-char' + (sid === state.selected ? ' selected' : '') + (meta.monitoring ? ' monitoring' : '') + (stale ? ' stale' : '');
+            cDiv.style.setProperty('--sprite-url', 'url("' + (SPRITES[meta.charIdx] || '') + '")');
+            const pixelCls = stale ? '' : (meta.busy ? 'busy' : (meta.monitoring ? 'monitoring' : (meta.waiting ? 'waiting' : '')));
+            let badge = '';
+            if (meta.monitoring)         badge = '🔍';
+            else if (meta.waiting)       badge = '🔔';
+            else if (!stale && meta.busy)badge = '⚡';
+            cDiv.innerHTML =
+              '<div class="pixel ' + pixelCls + '"></div>' +
+              '<div class="desk-item"></div>' +
+              (badge ? '<div class="char-badge">' + badge + '</div>' : '') +
+              salaryHtml +
+              '<div class="char-tag">' + escapeHtml(name) + '</div>';
+          }
+          cDiv.setAttribute('title', tagTitle);
+          cDiv.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            state.selected = sid;
+            vscode.setState(state);
+            renderAll();
+          });
+          (longStale ? bedroom : slots).appendChild(cDiv);
+        }
+        if (bedroom.children.length > 0) room.appendChild(bedroom);
+        room.appendChild(slots);
+        plan.appendChild(room);
+      }
+      // After all rooms placed, draw subagent parent-child connection lines.
+      // Run on next frame so layout has settled and getBoundingClientRect is accurate.
+      requestAnimationFrame(drawSubagentConnections);
+    }
+
+    /** Draw dashed lines connecting each subagent char to its parent char.
+     *  Uses an SVG overlay sized to the floor-plan's full scrollable area. */
+    function drawSubagentConnections() {
+      const plan = document.getElementById('floor-plan');
+      if (!plan) return;
+      const old = plan.querySelector('svg.connections-svg');
+      if (old) old.remove();
+      // Collect subagent → parent pairs and check both have rendered chars
+      const pairs = [];
+      for (const [sid, meta] of sessionMeta.entries()) {
+        if (!meta.isSubagent || !meta.parentSessionId) continue;
+        pairs.push([sid, meta.parentSessionId]);
+      }
+      if (pairs.length === 0) return;
+      // Find char elements by data-sid
+      const planRect = plan.getBoundingClientRect();
+      const charCenter = (sid) => {
+        const el = plan.querySelector('[data-sid="' + CSS.escape(sid) + '"]');
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return {
+          x: r.left - planRect.left + r.width / 2 + plan.scrollLeft,
+          y: r.top  - planRect.top  + r.height / 2 + plan.scrollTop,
+        };
+      };
+      const planW = plan.scrollWidth, planH = plan.scrollHeight;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'connections-svg');
+      svg.setAttribute('width', String(planW));
+      svg.setAttribute('height', String(planH));
+      svg.style.cssText = 'position:absolute;left:0;top:0;width:' + planW + 'px;height:' + planH + 'px;pointer-events:none;z-index:1;';
+      let drew = 0;
+      for (const [childSid, parentSid] of pairs) {
+        const c = charCenter(childSid), p = charCenter(parentSid);
+        if (!c || !p) continue;
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', String(p.x));
+        line.setAttribute('y1', String(p.y));
+        line.setAttribute('x2', String(c.x));
+        line.setAttribute('y2', String(c.y));
+        line.setAttribute('stroke', 'rgba(150,200,255,0.55)');
+        line.setAttribute('stroke-width', '1.5');
+        line.setAttribute('stroke-dasharray', '4 3');
+        svg.appendChild(line);
+        drew++;
+      }
+      if (drew > 0) {
+        plan.style.position = 'relative';
+        plan.insertBefore(svg, plan.firstChild);
+      }
+    }
+
+    function renderTimeline() {
+      const wrap = document.getElementById('timeline-wrap');
+      const drawerTitle = document.getElementById('drawer-title');
+      const drawerSub = document.getElementById('drawer-sub');
+      const sid = state.selected;
+
+      if (!sid || !bySession.has(sid)) {
+        if (drawerTitle) drawerTitle.textContent = 'Timeline';
+        if (drawerSub) drawerSub.textContent = '';
+        wrap.innerHTML = '<div class="empty"><p>Click a character in the floor plan to see its timeline.</p></div>';
+        return;
+      }
+      const meta = sessionMeta.get(sid) || {};
+      const events = bySession.get(sid).filter(e => filters.has(e.hook_event_name || ''));
+      const titleText = meta.title || sessionProject(meta);
+      if (drawerTitle) drawerTitle.textContent = titleText;
+      if (drawerSub) drawerSub.textContent = sid.slice(0, 8) + ' · ' + displayCwd(meta.cwd || '') +
+        ' · ' + events.length + '/' + bySession.get(sid).length + ' events';
+
+      // Merge in subagent events inline (sorted by ts) so the parent timeline shows a
+      // unified chronological view. Each subagent event is tagged with `_subagentOf` so
+      // it can be visually indented.
+      const mergedEvents = events.slice();
+      for (const [childSid, childMeta] of sessionMeta.entries()) {
+        if (!childMeta.isSubagent || childMeta.parentSessionId !== sid) continue;
+        const childEvents = (bySession.get(childSid) || []).filter(e => filters.has(e.hook_event_name || ''));
+        for (const ce of childEvents) {
+          mergedEvents.push({ ...ce, _subagentOf: childSid, _subagentName: childMeta.agentName || childSid.slice(0, 8) });
+        }
+      }
+      mergedEvents.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+
+      // --- Partition events into tasks (UserPromptSubmit → Stop/next prompt) ---
+      // Preamble = events before first prompt (usually SessionStart only).
+      const tasks = [];
+      const preamble = [];
+      let current = null;
+      for (const e of mergedEvents) {
+        // Subagent events don't start tasks or end them — they just stream inline.
+        if (e._subagentOf) {
+          if (current) { current.events.push(e); current.endTs = e.ts; }
+          else { preamble.push(e); }
+          continue;
+        }
+        if (e.hook_event_name === 'UserPromptSubmit') {
+          if (current) tasks.push(current);
+          current = { prompt: (e.prompt || '').trim(), startTs: e.ts, endTs: e.ts, events: [e], open: false };
+        } else if (current) {
+          current.events.push(e);
+          current.endTs = e.ts;
+          if (e.hook_event_name === 'Stop') {
+            tasks.push(current); current = null;
+          }
+        } else {
+          preamble.push(e);
+        }
+      }
+      if (current) { tasks.push(current); }
+      // Latest task expanded by default (live one)
+      if (tasks.length > 0) tasks[tasks.length - 1].open = true;
+
+      function renderEventRow(e, listEvents, idx) {
+        const row = document.createElement('div');
+        row.className = 'evt ' + (e.hook_event_name || '') + (e._subagentOf ? ' subagent-evt' : '');
+        let duration = '';
+        if (e.hook_event_name === 'PostToolUse') {
+          for (let i = idx - 1; i >= 0; i--) {
+            if (listEvents[i].hook_event_name === 'PreToolUse' && listEvents[i].tool_name === e.tool_name) {
+              const ms = e.ts - listEvents[i].ts;
+              duration = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
+              break;
+            }
+          }
+        }
+        const emoji = (e.tool_name && TOOL_EMOJI[e.tool_name]) || EVENT_EMOJI[e.hook_event_name] || '·';
+        const summary = toolSummary(e);
+        const detailJson = JSON.stringify(e, null, 2);
+        const subagentPrefix = e._subagentOf
+          ? '<span class="evt-subagent-tag" title="subagent: ' + escapeHtml(e._subagentOf) + '">└ ' + escapeHtml(e._subagentName || '') + '</span>'
+          : '';
+        row.innerHTML =
+          '<div class="evt-row">' +
+            '<span class="evt-ts">' + tsFmt(e.ts) + '</span>' +
+            '<span class="evt-emoji">' + emoji + '</span>' +
+            subagentPrefix +
+            '<span class="evt-name">' + (e.hook_event_name || '?') + (e.tool_name ? ' · ' + e.tool_name : '') + '</span>' +
+            '<span class="evt-summary">' + (summary || '') + '</span>' +
+            (duration ? '<span class="evt-duration">' + duration + '</span>' : '') +
+          '</div>' +
+          '<pre class="evt-detail"></pre>';
+        row.querySelector('.evt-detail').textContent = detailJson;
+        row.onclick = (ev) => { ev.stopPropagation(); row.classList.toggle('expanded'); };
+        return row;
+      }
+
+      const tl = document.createElement('div');
+      tl.className = 'timeline';
+
+      // "Load older events" button at the top — gives a visible way to paginate
+      // (the scroll-up handler also triggers it automatically).
+      const loadMoreBtn = document.createElement('button');
+      loadMoreBtn.className = 'load-older-btn';
+      const exhausted = paginationState.exhausted.has(sid);
+      loadMoreBtn.textContent = exhausted
+        ? 'No older events'
+        : paginationState.loading ? 'Loading older…' : '↑ Load older events';
+      loadMoreBtn.disabled = exhausted || paginationState.loading;
+      loadMoreBtn.onclick = (ev) => {
+        ev.stopPropagation();
+        if (paginationState.loading || exhausted) return;
+        const eventsList = bySession.get(sid) || [];
+        if (eventsList.length === 0) return;
+        paginationState.loading = true;
+        loadMoreBtn.textContent = 'Loading older…';
+        loadMoreBtn.disabled = true;
+        vscode.postMessage({ type: 'load-more-history', session_id: sid, before_ts: eventsList[0].ts, limit: 200 });
+      };
+      tl.appendChild(loadMoreBtn);
+
+      // Preamble rendered as a subtle "session started" row
+      preamble.forEach((e, idx) => tl.appendChild(renderEventRow(e, preamble, idx)));
+
+      // Each task as a collapsible block
+      tasks.forEach((task, taskIdx) => {
+        const taskDiv = document.createElement('div');
+        taskDiv.className = 'task' + (task.open ? ' open' : '');
+        const promptSnippet = task.prompt ? task.prompt.slice(0, 140) : '(no prompt)';
+        const dur = task.endTs - task.startTs;
+        const durStr = dur < 1000 ? dur + 'ms' : (dur / 1000).toFixed(1) + 's';
+        const toolCount = task.events.filter(e => e.hook_event_name === 'PreToolUse').length;
+        const ended = task.events.some(e => e.hook_event_name === 'Stop');
+
+        const header = document.createElement('div');
+        header.className = 'task-header';
+        header.innerHTML =
+          '<span class="task-fold">▶</span>' +
+          '<span class="task-ts">' + tsFmt(task.startTs) + '</span>' +
+          '<span class="task-prompt" title="' + (task.prompt || '').replace(/"/g, '&quot;') + '">' + promptSnippet + '</span>' +
+          '<span class="task-meta">' + toolCount + ' tools · ' + durStr + (ended ? '' : ' · ⚡ running') + '</span>';
+        header.onclick = () => { taskDiv.classList.toggle('open'); };
+        taskDiv.appendChild(header);
+
+        const body = document.createElement('div');
+        body.className = 'task-body';
+        task.events.forEach((e, idx) => body.appendChild(renderEventRow(e, task.events, idx)));
+        taskDiv.appendChild(body);
+
+        tl.appendChild(taskDiv);
+      });
+      wrap.innerHTML = '';
+      wrap.appendChild(tl);
+      wrap.scrollTop = wrap.scrollHeight;
+    }
+
+    function renderAll() { renderSidebar(); renderFloorPlan(); renderTimeline(); }
+    function renderAllThrottled() { renderSidebarThrottled(); renderFloorPlan(); renderTimeline(); }
+
+    // Track pagination state to avoid flooding the extension with load-more requests.
+    // One request in-flight at a time per session; debounce by recording the last request ts.
+    const paginationState = { loading: false, exhausted: new Set() };
+
+    window.addEventListener('message', ev => {
+      const msg = ev.data;
+      if (msg.type === 'event') {
+        ingest(msg.data);
+        if (!state.selected && bySession.size === 1) {
+          state.selected = msg.data.session_id || 'unknown';
+          vscode.setState(state);
+        }
+        renderAllThrottled();
+      } else if (msg.type === 'replay') {
+        for (const e of msg.data) ingest(e);
+        renderAll();
+      } else if (msg.type === 'usage-update') {
+        // Backend finished scanning per-session usage. Merge into our (let) map.
+        Object.assign(SESSION_USAGE, msg.sessionUsage || {});
+        renderAll();
+      } else if (msg.type === 'prompt-costs-update') {
+        // Backend finished scanning per-prompt costs. Replace top-N list.
+        PROMPT_COSTS.length = 0;
+        for (const p of (msg.promptCosts || [])) PROMPT_COSTS.push(p);
+        if (typeof updateCostboard === 'function') updateCostboard();
+      } else if (msg.type === 'history-chunk') {
+        paginationState.loading = false;
+        const sid = msg.session_id;
+        if (!msg.events || msg.events.length === 0) {
+          paginationState.exhausted.add(sid);
+          // Update the button state even when nothing returned
+          if (state.selected === sid) renderTimeline();
+          return;
+        }
+        // Prepend older events, then dedupe by (ts, hook_event_name, tool_name).
+        const existing = bySession.get(sid) || [];
+        const seen = new Set();
+        const merged = [];
+        const push = (e) => {
+          const key = (e.ts||0) + '|' + (e.hook_event_name||'') + '|' + (e.tool_name||'') + '|' + (e.prompt?.slice(0,40)||'');
+          if (seen.has(key)) return;
+          seen.add(key); merged.push(e);
+        };
+        for (const e of msg.events) push(e);
+        for (const e of existing) push(e);
+        merged.sort((a,b) => (a.ts||0) - (b.ts||0));
+        bySession.set(sid, merged);
+        // Preserve scroll position after prepending (don't jump).
+        const wrap = document.getElementById('timeline-wrap');
+        const prevHeight = wrap.scrollHeight;
+        const prevTop = wrap.scrollTop;
+        renderTimeline();
+        const newTop = prevTop + (wrap.scrollHeight - prevHeight);
+        wrap.scrollTop = newTop;
+      }
+    });
+
+    // Scroll-up pagination: when user scrolls near top of timeline, fetch older events.
+    (function setupScrollUpLoader() {
+      const wrap = document.getElementById('timeline-wrap');
+      if (!wrap) return;
+      wrap.addEventListener('scroll', () => {
+        if (paginationState.loading) return;
+        if (wrap.scrollTop > 40) return; // only trigger near the top
+        const sid = state.selected;
+        if (!sid || paginationState.exhausted.has(sid)) return;
+        const events = bySession.get(sid) || [];
+        if (events.length === 0) return;
+        const beforeTs = events[0].ts;
+        paginationState.loading = true;
+        vscode.postMessage({ type: 'load-more-history', session_id: sid, before_ts: beforeTs, limit: 200 });
+      });
+    })();
+
+    // Auto-tick sidebar every 30s so relative times ("2m ago") stay fresh
+    // Re-render every 5s so stale-liveness is reflected promptly (before: 30s = laggy)
+    setInterval(() => { renderSidebar(); }, 5_000);
+
+    // Hide >3d toggle
+    const hideOldBox = document.getElementById('hide-old');
+    hideOldBox.checked = !!state.hideOld;
+    hideOldBox.addEventListener('change', (e) => {
+      state.hideOld = e.target.checked;
+      vscode.setState(state);
+      renderSidebar();
+    });
+
+    // Search box: filter sidebar by title/project/prompt/tool/sid
+    const searchBox = document.getElementById('search-box');
+    if (searchBox) {
+      searchBox.value = state.searchQuery || '';
+      let searchDebounce = null;
+      searchBox.addEventListener('input', (e) => {
+        state.searchQuery = e.target.value;
+        vscode.setState(state);
+        if (searchDebounce) clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => renderSidebar(), 120);
+      });
+    }
+
+    // Heatmap collapsible — clicking the header toggles the row, chevron rotates 90°
+    const heatmapSection = document.getElementById('heatmap-section');
+    const heatmapHeader  = document.getElementById('heatmap-header');
+    const heatmapRow     = document.getElementById('heatmap-row');
+    if (heatmapSection && heatmapHeader && heatmapRow) {
+      if (state.heatmapOpen) {
+        heatmapRow.classList.remove('hidden');
+        heatmapSection.classList.add('open');
+      }
+      heatmapHeader.addEventListener('click', () => {
+        const willOpen = heatmapRow.classList.contains('hidden');
+        heatmapRow.classList.toggle('hidden');
+        heatmapSection.classList.toggle('open', willOpen);
+        state.heatmapOpen = willOpen;
+        vscode.setState(state);
+        if (willOpen) updateHeatmap();
+      });
+    }
+
+    // Costboard collapsible
+    const cbSection = document.getElementById('costboard-section');
+    const cbHeader  = document.getElementById('costboard-header');
+    const cbList    = document.getElementById('costboard-list');
+    if (cbSection && cbHeader && cbList) {
+      if (state.costboardOpen) {
+        cbList.classList.remove('hidden');
+        cbSection.classList.add('open');
+        updateCostboard();
+      }
+      cbHeader.addEventListener('click', () => {
+        const willOpen = cbList.classList.contains('hidden');
+        cbList.classList.toggle('hidden');
+        cbSection.classList.toggle('open', willOpen);
+        state.costboardOpen = willOpen;
+        vscode.setState(state);
+        if (willOpen) updateCostboard();
+      });
+    }
+
+    // --- Delete agent modal ---
+    let pendingDeleteSid = null;
+    const modal = document.getElementById('delete-modal');
+    const modalSummary = document.getElementById('delete-summary');
+    const deleteFileBox = document.getElementById('delete-file');
+    const cancelBtn = document.getElementById('delete-cancel');
+    const confirmBtn = document.getElementById('delete-confirm');
+
+    function escapeHtml(s) {
+      if (s == null) return '';
+      return String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function openDeleteModal(sid) {
+      const meta = sessionMeta.get(sid) || {};
+      const title = meta.title || sessionProject(meta);
+      const events = bySession.get(sid) || [];
+      // Find last UserPromptSubmit and last PreToolUse
+      let lastPrompt = null, lastTool = null;
+      for (let i = events.length - 1; i >= 0; i--) {
+        const e = events[i];
+        if (!lastPrompt && e.hook_event_name === 'UserPromptSubmit' && e.prompt) lastPrompt = e;
+        if (!lastTool && e.hook_event_name === 'PreToolUse' && e.tool_name) lastTool = e;
+        if (lastPrompt && lastTool) break;
+      }
+      const lastSeen = meta.lastTs ? timeAgo(meta.lastTs) + ' ago' : 'never';
+      const spriteUrl = SPRITES[meta.charIdx] || '';
+      const promptTxt = lastPrompt ? String(lastPrompt.prompt).slice(0, 120) : '(no prompt seen)';
+      const toolTxt = lastTool
+        ? lastTool.tool_name + (toolSummary(lastTool) ? ' · ' + toolSummary(lastTool) : '')
+        : '(no tool use seen)';
+
+      pendingDeleteSid = sid;
+      modalSummary.style.setProperty('--sprite-url', 'url("' + spriteUrl + '")');
+      modalSummary.innerHTML =
+        '<div class="avatar"><div class="pixel"></div></div>' +
+        '<div class="info">' +
+          '<div class="title">' + escapeHtml(title) + '</div>' +
+          '<div class="sub">' + escapeHtml(sid) + '</div>' +
+          '<div class="sub">' + escapeHtml(displayCwd(meta.cwd || '')) + '</div>' +
+        '</div>' +
+        '<div class="recent">' +
+          '<div class="row"><span class="label">Last active</span><span class="val">' + lastSeen + '</span></div>' +
+          '<div class="row"><span class="label">Last prompt</span><span class="val" title="' + escapeHtml(lastPrompt ? lastPrompt.prompt : '') + '">' + escapeHtml(promptTxt) + '</span></div>' +
+          '<div class="row"><span class="label">Last tool</span><span class="val">' + escapeHtml(toolTxt) + '</span></div>' +
+        '</div>';
+      deleteFileBox.checked = false;
+      modal.classList.add('open');
+    }
+    function closeDeleteModal() {
+      pendingDeleteSid = null;
+      modal.classList.remove('open');
+    }
+    cancelBtn.addEventListener('click', closeDeleteModal);
+    modal.addEventListener('click', (e) => { if (e.target === modal) closeDeleteModal(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDeleteModal(); document.querySelectorAll('.gear-menu.open').forEach(m => m.classList.remove('open')); } });
+    // Click outside any open gear menu = close it
+    document.addEventListener('click', () => { document.querySelectorAll('.gear-menu.open').forEach(m => m.classList.remove('open')); });
+
+    confirmBtn.addEventListener('click', () => {
+      if (!pendingDeleteSid) { closeDeleteModal(); return; }
+      const sid = pendingDeleteSid;
+      const alsoFile = !!deleteFileBox.checked;
+      // Remove locally
+      bySession.delete(sid);
+      sessionMeta.delete(sid);
+      if (state.selected === sid) state.selected = null;
+      vscode.setState(state);
+      // Ask extension host to purge its buffer + optionally delete the file
+      vscode.postMessage({ type: 'delete-session', session_id: sid, alsoDeleteFile: alsoFile });
+      closeDeleteModal();
+      renderAll();
+    });
+
+    document.querySelectorAll('#filter-bar input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', e => {
+        const f = e.target.dataset.filter;
+        if (e.target.checked) filters.add(f); else filters.delete(f);
+        renderTimeline();
+      });
+    });
+
+    // Timeline drawer collapse/expand
+    const drawerEl = document.getElementById('timeline-drawer');
+    const drawerToggleBtn = document.getElementById('drawer-toggle');
+    if (drawerToggleBtn && drawerEl) {
+      // Restore previous collapsed state
+      if (state.drawerCollapsed) drawerEl.classList.add('collapsed');
+      drawerToggleBtn.addEventListener('click', () => {
+        drawerEl.classList.toggle('collapsed');
+        state.drawerCollapsed = drawerEl.classList.contains('collapsed');
+        vscode.setState(state);
+      });
+    }
+  </script>
+</body>
+</html>

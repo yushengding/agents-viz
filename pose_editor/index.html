@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>OpenPose Skeleton Editor</title>
+<style>
+  body { font-family: monospace; background: #222; color: #eee; margin: 0; padding: 12px; }
+  .row { display: flex; gap: 12px; }
+  canvas { background: #000; cursor: grab; border: 1px solid #444; }
+  .panel { display: flex; flex-direction: column; gap: 8px; min-width: 240px; }
+  button, select { padding: 8px 12px; background: #444; color: #eee; border: 1px solid #666; cursor: pointer; }
+  button:hover { background: #555; }
+  .hint { font-size: 12px; color: #aaa; }
+  h2 { margin: 0 0 8px 0; font-size: 16px; }
+  .kp-list { font-size: 11px; max-height: 400px; overflow-y: auto; }
+  .kp-list div { padding: 2px 4px; }
+  .kp-list div.sel { background: #2a4a8a; }
+</style></head>
+<body>
+<h2>OpenPose Skeleton Editor — drag any joint, click "save PNG" to export</h2>
+<div class="row">
+  <canvas id="cv" width="512" height="512"></canvas>
+  <div class="panel">
+    <label>Pose: <select id="poseSel"></select></label>
+    <button id="savePng">Save PNG (1024x1024)</button>
+    <button id="saveJson">Save JSON (all poses)</button>
+    <button id="reset">Reset this pose</button>
+    <button id="addBtn">New blank pose</button>
+    <input id="newName" type="text" placeholder="new pose name"/>
+    <div class="hint">
+      <b>Two ways to move a joint:</b><br>
+      A. Drag a colored circle directly (hit area ~14px)<br>
+      B. Click a row below to "arm" it -> next canvas click jumps it there<br>
+      <br>
+      <b>Note on overlapping joints:</b> if two joints overlap (e.g. l-hip + r-hip), use Method B — pick from list, then click the new spot on canvas.<br>
+      <br>
+      OpenPose is 2D-only — no front/back depth. Simple poses fine; for crossed limbs (arms folded behind back) use the 3D editor at zhuyu1997.github.io/open-pose-editor/<br>
+      <br>
+      Saved PNG -> Downloads folder -> copy to <code>pose_skeletons/pose_&lt;action&gt;_&lt;frame&gt;.png</code>
+    </div>
+    <div class="kp-list" id="kpList"></div>
+  </div>
+</div>
+
+<script>
+const W = 512, H = 512;          // editor canvas
+const OUT_W = 1024, OUT_H = 1024; // export size
+let DATA = null;
+let curPose = null;
+let curName = "";
+let dragIdx = -1;
+let selIdx = -1;
+let armed = false;  // when true, next canvas click moves selected kp anywhere
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+
+async function load() {
+  const r = await fetch("poses.json");
+  DATA = await r.json();
+  const sel = document.getElementById("poseSel");
+  for (const k of Object.keys(DATA.poses)) {
+    const o = document.createElement("option");
+    o.value = k; o.textContent = k;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => switchPose(sel.value);
+  switchPose(Object.keys(DATA.poses)[0]);
+}
+
+function switchPose(name) {
+  curName = name;
+  curPose = JSON.parse(JSON.stringify(DATA.poses[name]));
+  draw();
+  renderKpList();
+}
+
+function draw(canvas, ctx2, w, h) {
+  canvas = canvas || cv; ctx2 = ctx2 || ctx; w = w || W; h = h || H;
+  ctx2.fillStyle = "#000";
+  ctx2.fillRect(0, 0, w, h);
+  if (!curPose) return;
+  // limbs
+  ctx2.lineCap = "round";
+  ctx2.lineWidth = 14 * (w / 1024);
+  for (let i = 0; i < DATA.limbs.length; i++) {
+    const [a, b] = DATA.limbs[i];
+    const pa = curPose[a], pb = curPose[b];
+    if (!pa || !pb) continue;
+    const c = DATA.limb_colors[i];
+    ctx2.strokeStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+    ctx2.beginPath();
+    ctx2.moveTo(pa[0]*w, pa[1]*h);
+    ctx2.lineTo(pb[0]*w, pb[1]*h);
+    ctx2.stroke();
+  }
+  // joints — bigger and easier to hit
+  for (let i = 0; i < curPose.length; i++) {
+    const p = curPose[i]; if (!p) continue;
+    const c = DATA.kp_colors[i];
+    const exportSize = w === OUT_W;
+    // export uses original 8px; editor uses 14px for click hit
+    const r = exportSize ? 8 : 14 * (i === selIdx ? 1.4 : 1);
+    ctx2.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+    ctx2.beginPath();
+    ctx2.arc(p[0]*w, p[1]*h, r, 0, Math.PI*2);
+    ctx2.fill();
+    if (!exportSize) {
+      ctx2.strokeStyle = i === selIdx ? "#fff" : "rgba(0,0,0,0.5)";
+      ctx2.lineWidth = i === selIdx ? 3 : 1.5;
+      ctx2.stroke();
+    }
+  }
+}
+
+function renderKpList() {
+  const list = document.getElementById("kpList");
+  list.innerHTML = "";
+  for (let i = 0; i < DATA.kp_names.length; i++) {
+    const c = DATA.kp_colors[i];
+    const d = document.createElement("div");
+    if (i === selIdx) d.className = "sel";
+    d.style.borderLeft = `4px solid rgb(${c[0]},${c[1]},${c[2]})`;
+    d.style.paddingLeft = "8px";
+    d.textContent = `${i.toString().padStart(2,'0')} ${DATA.kp_names[i]}`;
+    d.onclick = () => { selIdx = i; armed = true; renderKpList(); draw(); };
+    list.appendChild(d);
+  }
+}
+
+cv.addEventListener("mousedown", e => {
+  const r = cv.getBoundingClientRect();
+  const x = (e.clientX - r.left) / W, y = (e.clientY - r.top) / H;
+  // If a keypoint is "armed" via list click, drag THAT one anywhere
+  if (selIdx >= 0 && armed) {
+    dragIdx = selIdx;
+    curPose[dragIdx] = [x, y];
+    DATA.poses[curName] = curPose;
+    armed = false; draw(); return;
+  }
+  // Otherwise pick nearest joint within larger hit radius
+  let best = -1, bd = 1e9;
+  for (let i = 0; i < curPose.length; i++) {
+    const p = curPose[i]; if (!p) continue;
+    const d = (p[0]-x)**2 + (p[1]-y)**2;
+    if (d < bd) { bd = d; best = i; }
+  }
+  // Hit radius enlarged: 0.025 normalized = ~13px in 512 canvas
+  if (bd < 0.025) { dragIdx = best; selIdx = best; renderKpList(); draw(); }
+});
+cv.addEventListener("mousemove", e => {
+  if (dragIdx < 0) return;
+  const r = cv.getBoundingClientRect();
+  const x = (e.clientX - r.left) / W, y = (e.clientY - r.top) / H;
+  curPose[dragIdx] = [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))];
+  DATA.poses[curName] = curPose;
+  draw();
+});
+window.addEventListener("mouseup", () => dragIdx = -1);
+
+document.getElementById("savePng").onclick = () => {
+  const c = document.createElement("canvas");
+  c.width = OUT_W; c.height = OUT_H;
+  const cx = c.getContext("2d");
+  draw(c, cx, OUT_W, OUT_H);
+  c.toBlob(blob => {
+    const a = document.createElement("a");
+    a.download = `pose_${curName}.png`;
+    a.href = URL.createObjectURL(blob);
+    a.click();
+  });
+};
+document.getElementById("saveJson").onclick = () => {
+  const blob = new Blob([JSON.stringify(DATA, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.download = "poses.json";
+  a.href = URL.createObjectURL(blob);
+  a.click();
+};
+document.getElementById("reset").onclick = async () => {
+  const r = await fetch("poses.json"); const orig = await r.json();
+  if (orig.poses[curName]) {
+    DATA.poses[curName] = JSON.parse(JSON.stringify(orig.poses[curName]));
+    switchPose(curName);
+  }
+};
+document.getElementById("addBtn").onclick = () => {
+  const name = document.getElementById("newName").value.trim();
+  if (!name) return alert("type a name first");
+  if (DATA.poses[name]) return alert("exists");
+  DATA.poses[name] = JSON.parse(JSON.stringify(DATA.poses["idle"]));
+  const sel = document.getElementById("poseSel");
+  const o = document.createElement("option");
+  o.value = name; o.textContent = name;
+  sel.appendChild(o);
+  sel.value = name;
+  switchPose(name);
+};
+
+load();
+</script>
+</body></html>
