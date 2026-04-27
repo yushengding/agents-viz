@@ -16,7 +16,8 @@ import os
 import colorsys
 from PIL import Image
 
-ROOT = r'C:\Users\redacted\Desktop\projects\agents-viz\extension\media'
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.join(REPO_ROOT, 'extension', 'media')
 SRC = os.path.join(ROOT, 'characters-lpc')
 DST = os.path.join(ROOT, 'characters-lpc-composed')
 os.makedirs(DST, exist_ok=True)

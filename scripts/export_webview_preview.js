@@ -40,9 +40,9 @@ html = html.replace(/__SESSION_USAGE__/g, JSON.stringify({
 }));
 const _previewNow = Date.now();
 html = html.replace(/__PROMPT_COSTS__/g, JSON.stringify([
-    { sessionId: 'aaaa1111', promptText: 'tweak fusion UI legibility on mobile', promptTs: _previewNow - 1000, cost: 0.42, tokens: 18000, cwd: 'C:/Users/redacted/Desktop/projects/stickerfort_clean' },
-    { sessionId: 'bbbb2222', promptText: 'backtest VIX>30 entry with SPXL', promptTs: _previewNow - 2000, cost: 0.31, tokens: 12000, cwd: 'C:/Users/redacted/Desktop/projects/trading' },
-    { sessionId: 'cccc3333', promptText: 'add pixel character avatars to the sidebar', promptTs: _previewNow - 3000, cost: 0.08, tokens: 4000, cwd: 'C:/Users/redacted/Desktop/projects/agents-viz' },
+    { sessionId: 'aaaa1111', promptText: 'tweak fusion UI legibility on mobile', promptTs: _previewNow - 1000, cost: 0.42, tokens: 18000, cwd: '~/projects/example_game' },
+    { sessionId: 'bbbb2222', promptText: 'backtest VIX>30 entry with SPXL', promptTs: _previewNow - 2000, cost: 0.31, tokens: 12000, cwd: '~/projects/example_trading' },
+    { sessionId: 'cccc3333', promptText: 'add pixel character avatars to the sidebar', promptTs: _previewNow - 3000, cost: 0.08, tokens: 4000, cwd: '~/projects/agents-viz' },
 ]));
 
 const now = Date.now();
@@ -57,58 +57,58 @@ const mkEvt = (sid, cwd, name, extras = {}, dt = 0) => ({
 // Realistic multi-session scenario: 3 concurrent Claude sessions with renames
 const events = [
     // Session A - stickerfort with custom-title "sticker-polish"
-    mkEvt('aaaa1111', 'C:/Users/redacted/Desktop/projects/stickerfort_clean', 'SessionStart', { session_title: 'sticker-polish' }, 0),
-    mkEvt('aaaa1111', 'C:/Users/redacted/Desktop/projects/stickerfort_clean', 'UserPromptSubmit',
+    mkEvt('aaaa1111', '~/projects/example_game', 'SessionStart', { session_title: 'sticker-polish' }, 0),
+    mkEvt('aaaa1111', '~/projects/example_game', 'UserPromptSubmit',
         { session_title: 'sticker-polish', prompt: 'tweak fusion UI legibility on mobile' }, 500),
-    mkEvt('aaaa1111', 'C:/Users/redacted/Desktop/projects/stickerfort_clean', 'PreToolUse',
+    mkEvt('aaaa1111', '~/projects/example_game', 'PreToolUse',
         { session_title: 'sticker-polish', tool_name: 'Read', tool_input: { file_path: 'stickerfort/scripts/fusion_ui.gd' } }, 900),
-    mkEvt('aaaa1111', 'C:/Users/redacted/Desktop/projects/stickerfort_clean', 'PostToolUse',
+    mkEvt('aaaa1111', '~/projects/example_game', 'PostToolUse',
         { session_title: 'sticker-polish', tool_name: 'Read' }, 950),
-    mkEvt('aaaa1111', 'C:/Users/redacted/Desktop/projects/stickerfort_clean', 'PreToolUse',
+    mkEvt('aaaa1111', '~/projects/example_game', 'PreToolUse',
         { session_title: 'sticker-polish', tool_name: 'Edit', tool_input: { file_path: 'fusion_ui.gd' } }, 1200),
-    mkEvt('aaaa1111', 'C:/Users/redacted/Desktop/projects/stickerfort_clean', 'PostToolUse',
+    mkEvt('aaaa1111', '~/projects/example_game', 'PostToolUse',
         { session_title: 'sticker-polish', tool_name: 'Edit' }, 1350),
     // Now running Bash — leave as busy state
-    mkEvt('aaaa1111', 'C:/Users/redacted/Desktop/projects/stickerfort_clean', 'PreToolUse',
+    mkEvt('aaaa1111', '~/projects/example_game', 'PreToolUse',
         { session_title: 'sticker-polish', tool_name: 'Bash', tool_input: { command: 'cd stickerfort && godot --headless --quit-after 3 test_fusion.tscn' } }, 1500),
 
     // Session B - trading, renamed to "vix-backtest"
-    mkEvt('bbbb2222', 'C:/Users/redacted/Desktop/projects/trading', 'SessionStart', { session_title: 'vix-backtest' }, 200),
-    mkEvt('bbbb2222', 'C:/Users/redacted/Desktop/projects/trading', 'UserPromptSubmit',
+    mkEvt('bbbb2222', '~/projects/example_trading', 'SessionStart', { session_title: 'vix-backtest' }, 200),
+    mkEvt('bbbb2222', '~/projects/example_trading', 'UserPromptSubmit',
         { session_title: 'vix-backtest', prompt: 'backtest VIX>30 entry with SPXL' }, 600),
-    mkEvt('bbbb2222', 'C:/Users/redacted/Desktop/projects/trading', 'PreToolUse',
+    mkEvt('bbbb2222', '~/projects/example_trading', 'PreToolUse',
         { session_title: 'vix-backtest', tool_name: 'WebFetch', tool_input: { url: 'https://cboe.com/vix/historical' } }, 800),
-    mkEvt('bbbb2222', 'C:/Users/redacted/Desktop/projects/trading', 'PostToolUse',
+    mkEvt('bbbb2222', '~/projects/example_trading', 'PostToolUse',
         { session_title: 'vix-backtest', tool_name: 'WebFetch' }, 2100),
-    mkEvt('bbbb2222', 'C:/Users/redacted/Desktop/projects/trading', 'PreToolUse',
+    mkEvt('bbbb2222', '~/projects/example_trading', 'PreToolUse',
         { session_title: 'vix-backtest', tool_name: 'Bash', tool_input: { command: 'python backtest_vix.py --rule vix_gt_30 --leverage 3x' } }, 2200),
-    mkEvt('bbbb2222', 'C:/Users/redacted/Desktop/projects/trading', 'PostToolUse',
+    mkEvt('bbbb2222', '~/projects/example_trading', 'PostToolUse',
         { session_title: 'vix-backtest', tool_name: 'Bash' }, 5800),
-    mkEvt('bbbb2222', 'C:/Users/redacted/Desktop/projects/trading', 'Notification',
+    mkEvt('bbbb2222', '~/projects/example_trading', 'Notification',
         { session_title: 'vix-backtest', message: 'Awaiting user input: rule variant to test?' }, 6000),
 
     // Session C - agents-viz itself, this session (no rename), currently searching files
-    mkEvt('cccc3333', 'C:/Users/redacted/Desktop/projects/agents-viz', 'SessionStart', {}, 400),
-    mkEvt('cccc3333', 'C:/Users/redacted/Desktop/projects/agents-viz', 'UserPromptSubmit',
+    mkEvt('cccc3333', '~/projects/agents-viz', 'SessionStart', {}, 400),
+    mkEvt('cccc3333', '~/projects/agents-viz', 'UserPromptSubmit',
         { prompt: 'add pixel character avatars to the sidebar' }, 1000),
-    mkEvt('cccc3333', 'C:/Users/redacted/Desktop/projects/agents-viz', 'PreToolUse',
+    mkEvt('cccc3333', '~/projects/agents-viz', 'PreToolUse',
         { tool_name: 'Grep', tool_input: { pattern: 'WEBVIEW_HTML', path: 'extension/src' } }, 1500),
-    mkEvt('cccc3333', 'C:/Users/redacted/Desktop/projects/agents-viz', 'PostToolUse',
+    mkEvt('cccc3333', '~/projects/agents-viz', 'PostToolUse',
         { tool_name: 'Grep' }, 1600),
-    mkEvt('cccc3333', 'C:/Users/redacted/Desktop/projects/agents-viz', 'PreToolUse',
+    mkEvt('cccc3333', '~/projects/agents-viz', 'PreToolUse',
         { tool_name: 'Read', tool_input: { file_path: 'extension/src/extension.ts' } }, 1800),
 
     // Session D - 10 min stale (sofa in Lounge)
-    mkEvt('dddd4444', 'C:/Users/redacted/Desktop/projects/stickerfort_clean', 'SessionStart', { session_title: 'old-explore' }, -10 * 60 * 1000),
-    mkEvt('dddd4444', 'C:/Users/redacted/Desktop/projects/stickerfort_clean', 'UserPromptSubmit',
+    mkEvt('dddd4444', '~/projects/example_game', 'SessionStart', { session_title: 'old-explore' }, -10 * 60 * 1000),
+    mkEvt('dddd4444', '~/projects/example_game', 'UserPromptSubmit',
         { session_title: 'old-explore', prompt: 'what is in this project' }, -10 * 60 * 1000 + 500),
-    mkEvt('dddd4444', 'C:/Users/redacted/Desktop/projects/stickerfort_clean', 'Stop', { session_title: 'old-explore' }, -10 * 60 * 1000 + 8000),
+    mkEvt('dddd4444', '~/projects/example_game', 'Stop', { session_title: 'old-explore' }, -10 * 60 * 1000 + 8000),
 
     // Session E - 2 days stale (bed in Lounge)
-    mkEvt('eeee5555', 'C:/Users/redacted/Desktop/projects/trading', 'SessionStart', { session_title: 'two-day-sleeper' }, -2 * 24 * 60 * 60 * 1000),
-    mkEvt('eeee5555', 'C:/Users/redacted/Desktop/projects/trading', 'UserPromptSubmit',
+    mkEvt('eeee5555', '~/projects/example_trading', 'SessionStart', { session_title: 'two-day-sleeper' }, -2 * 24 * 60 * 60 * 1000),
+    mkEvt('eeee5555', '~/projects/example_trading', 'UserPromptSubmit',
         { session_title: 'two-day-sleeper', prompt: 'check last month PnL' }, -2 * 24 * 60 * 60 * 1000 + 500),
-    mkEvt('eeee5555', 'C:/Users/redacted/Desktop/projects/trading', 'Stop', { session_title: 'two-day-sleeper' }, -2 * 24 * 60 * 60 * 1000 + 5000),
+    mkEvt('eeee5555', '~/projects/example_trading', 'Stop', { session_title: 'two-day-sleeper' }, -2 * 24 * 60 * 60 * 1000 + 5000),
 ];
 
 const darkThemeCss = `
