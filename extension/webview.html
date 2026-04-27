@@ -534,22 +534,46 @@
       50%      { opacity: 1;   transform: scale(1.3); }
     }
     .info .strip {
-      display: flex; gap: 2px; height: 10px; margin-top: 6px;
+      display: flex; gap: 1px; height: 14px; margin-top: 6px;
       padding: 1px; border-radius: 3px;
-      background: rgba(0,0,0,0.2);
+      background: rgba(0,0,0,0.4);
+      border: 1px solid rgba(255,255,255,0.10);
+      position: relative;
     }
-    .info .strip span { flex: 1; background: var(--vscode-editorWidget-background); border-radius: 2px; min-width: 3px; }
-    /* GitHub-graph style: cells colored by the TOOL used in that 1-min bin.
-       Empty bins show default editor-widget background (dim). */
-    .info .strip span.empty        { background: rgba(255,255,255,0.06); }
-    .info .strip span.tool-prompt  { background: #DCDCAA; }  /* yellow = user prompt */
-    .info .strip span.tool-bash    { background: #569CD6; }  /* blue = shell */
-    .info .strip span.tool-edit    { background: #4EC9B0; }  /* teal = write/edit */
-    .info .strip span.tool-read    { background: #F48771; }  /* orange = read/search */
-    .info .strip span.tool-web     { background: #9CDCFE; }  /* light-blue = web */
-    .info .strip span.tool-agent   { background: #C586C0; }  /* magenta = subagent */
-    .info .strip span.tool-plan    { background: #CE9178; }  /* brown = plan */
-    .info .strip span.tool-other   { background: #808080; }
+    /* `flex: 1 1 0` + `padding: 0` so all 24 cells share width equally. The global
+     * `.empty { padding: 40px 20px }` rule (line ~1526, used for placeholder text)
+     * bleeds into empty strip cells unless we override it explicitly. */
+    /* Continuous-time strip: each event is an absolutely-positioned dot.
+     * NOTE: must NOT use class name ".dot" — there's a global `.session.busy .dot`
+     * pulse animation for the status indicator. Using ".tt-dot" (tool-timeline-dot)
+     * keeps these strip dots free of the pulse animation.
+     * box-shadow inherited from .tool-* would balloon brightness when many dots
+     * stack — explicitly suppress + use opacity so density still reads but
+     * doesn't saturate to white at N≈1000. */
+    .info .strip span.tt-dot {
+      position: absolute; top: 1px; bottom: 1px;
+      width: 2px; margin-left: -1px; /* center on its left% anchor */
+      border-radius: 1px;
+      flex: none; padding: 0;
+      opacity: 0.55;
+      box-shadow: none;
+      animation: none !important;
+      mix-blend-mode: lighten; /* gentler than screen — keeps colors instead of washing to white */
+    }
+    .info .strip span.empty-msg {
+      flex: 1 1 0; padding: 0;
+      font-size: 9px; color: rgba(255,255,255,0.35);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .info .strip span.empty        { background: rgba(255,255,255,0.06); padding: 0; }
+    .info .strip span.tool-prompt  { background: #DCDCAA; box-shadow: 0 0 4px rgba(220,220,170,0.7); }
+    .info .strip span.tool-bash    { background: #569CD6; box-shadow: 0 0 4px rgba(86,156,214,0.7); }
+    .info .strip span.tool-edit    { background: #4EC9B0; box-shadow: 0 0 4px rgba(78,201,176,0.7); }
+    .info .strip span.tool-read    { background: #F48771; box-shadow: 0 0 4px rgba(244,135,113,0.7); }
+    .info .strip span.tool-web     { background: #9CDCFE; box-shadow: 0 0 4px rgba(156,220,254,0.7); }
+    .info .strip span.tool-agent   { background: #C586C0; box-shadow: 0 0 4px rgba(197,134,192,0.7); }
+    .info .strip span.tool-plan    { background: #CE9178; box-shadow: 0 0 4px rgba(206,145,120,0.7); }
+    .info .strip span.tool-other   { background: #808080; box-shadow: 0 0 4px rgba(128,128,128,0.7); }
     /* Legacy event-based class styling kept for compatibility w/ old meta.strip values */
     .info .strip span.SessionStart { background: var(--evt-sessionstart); }
     .info .strip span.UserPromptSubmit { background: var(--evt-userprompt); }
@@ -1782,7 +1806,7 @@
     // that wipes the whole panel. typeof is the standard safe-existence guard.
     const SESSION_USAGE = (typeof __SESSION_USAGE__ !== 'undefined') ? __SESSION_USAGE__ : {};
     const PROMPT_COSTS  = (typeof __PROMPT_COSTS__  !== 'undefined') ? __PROMPT_COSTS__  : [];
-    const STRIP_LEN = 24;  /* 24 cells × 1hr bins = 24h activity view */
+    const STRIP_LEN = 24;  /* 24 cells; bin width auto-scales with timeline span */
 
     // Format: $1,234.56 | $12.3 | $0.45 | $0.00
     function fmtCost(c) {
@@ -2267,8 +2291,31 @@
       return 'other';
     }
 
+    // Debug helper: window.heatmapDebug() prints per-session toolTimeline stats
+    // so user can verify why heatmap is/isn't rendering. Run in webview devtools.
+    window.heatmapDebug = function () {
+      const now = Date.now();
+      const out = [];
+      for (const [sid, meta] of sessionMeta.entries()) {
+        const tl = meta.toolTimeline || [];
+        const oldest = tl.length ? Math.round((now - tl[0].ts) / 3_600_000) : null;
+        const newest = tl.length ? Math.round((now - tl[tl.length - 1].ts) / 3_600_000) : null;
+        const within24 = tl.filter(te => (now - te.ts) < 24*3_600_000).length;
+        out.push({ sid: sid.slice(0, 8), title: meta.title, totalEvents: tl.length,
+                   oldest_h_ago: oldest, newest_h_ago: newest, within_24h: within24,
+                   lastTs_h_ago: meta.lastTs ? Math.round((now-meta.lastTs)/3_600_000) : null });
+      }
+      console.table(out);
+      console.log('Total sessions:', out.length);
+      return out;
+    };
+
     function ingest(e) {
-      const sid = e.session_id || 'unknown';
+      // Drop events without a real session_id. Otherwise they all merge into a
+      // fake 'unknown' card that pollutes the sidebar (e.g. with title 'agents-viz'
+      // pulled from session_title on a sessionless event).
+      if (!e.session_id) return;
+      const sid = e.session_id;
       if (!bySession.has(sid)) bySession.set(sid, []);
       bySession.get(sid).push(e);
       let meta = sessionMeta.get(sid);
@@ -2333,7 +2380,8 @@
       } else if (e.hook_event_name === 'UserPromptSubmit') {
         meta.toolTimeline.push({ ts: e.ts, tool: 'Prompt' });
       }
-      // Keep up to 24h of tool events (bounded by max length 2000 to guard memory).
+      // Keep up to 24h of tool events — strip is a 24h view, no need to retain longer.
+      // Bounded by max length 2000 to guard memory.
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
       while (meta.toolTimeline.length > 0 && meta.toolTimeline[0].ts < cutoff) meta.toolTimeline.shift();
       if (meta.toolTimeline.length > 2000) meta.toolTimeline.splice(0, meta.toolTimeline.length - 2000);
@@ -2485,29 +2533,38 @@
         const actionEmoji = meta.monitoring ? '🔍'
           : meta.waiting ? '🔔'
           : (meta.busy ? (TOOL_EMOJI[meta.lastTool] || '⚡') : '💤');
-        // GitHub-graph style activity strip.
-        // 24 cells × 60-min bins = 24 hours of visible history.
-        const BIN_SEC = 60 * 60;
+        // Continuous-time strip: every event in the last 1h is rendered as a small
+        // colored dot positioned by its actual timestamp (not by execution order
+        // and not bucketed). Strip is a 1h timeline: left edge = 60min ago, right
+        // edge = now. With 1000 events you see 1000 sub-pixel dots stacking into
+        // a density cloud; with 10 events you see 10 distinct ticks.
         const now = Date.now();
+        const ONE_HOUR_MS = 60 * 60 * 1000;
         const toolEvents = meta.toolTimeline || [];
-        const bins = new Array(STRIP_LEN).fill(null);
-        const binCounts = new Array(STRIP_LEN).fill(0);
-        for (const te of toolEvents) {
-          const binIdx = STRIP_LEN - 1 - Math.floor((now - te.ts) / 1000 / BIN_SEC);
-          if (binIdx < 0 || binIdx >= STRIP_LEN) continue;
-          // Prefer the most recent tool in the bin (latest wins)
-          if (!bins[binIdx] || (te.ts >= (bins[binIdx + '_ts'] || 0))) {
-            bins[binIdx] = te.tool;
-            bins[binIdx + '_ts'] = te.ts;
-          }
-          binCounts[binIdx]++;
-        }
-        const stripHtml = bins.map((tool, i) => {
-          if (!tool) return '<span class="empty" title="' + (STRIP_LEN - 1 - i) + 'h ago · no activity"></span>';
-          const hoursAgo = Math.round((now - (bins[i + '_ts'] || now)) / 3_600_000 * 10) / 10;
-          const title = tool + ' · ' + binCounts[i] + ' events · ' + hoursAgo + 'h ago';
-          return '<span class="tool-' + toolCssClass(tool) + '" title="' + title + '"></span>';
-        }).join('');
+        const recent = toolEvents.filter(te => {
+          const a = now - te.ts;
+          return a >= 0 && a < ONE_HOUR_MS;
+        });
+        const totalCalls = recent.length;
+        const lastTs = toolEvents.length ? toolEvents[toolEvents.length - 1].ts : 0;
+        const stripTitle = totalCalls + ' calls in last 1h · most recent ' +
+                           (lastTs ? timeAgo(lastTs) + ' ago' : 'n/a');
+        // (kept so DOM data-filled attribute still reads sensibly for diagnostics)
+        const filledBins = totalCalls;
+        // Render one absolutely-positioned dot per event. left% = (ageFraction).
+        // ageFraction 0 = now (right edge), 1 = 60min ago (left edge).
+        // Each dot is a tiny colored span; many events at the same moment overlap
+        // visually into a brighter spot.
+        const stripHtml = recent.length === 0
+          ? '<span class="empty-msg" title="no calls in last 1h">no recent activity</span>'
+          : recent.map(te => {
+              const ageMs = now - te.ts;
+              const xPct = (1 - ageMs / ONE_HOUR_MS) * 100; // right = newer
+              const ago = timeAgo(te.ts);
+              const title = te.tool + ' · ' + ago + ' ago';
+              return '<span class="tt-dot tool-' + toolCssClass(te.tool) +
+                     '" style="left:' + xPct.toFixed(2) + '%" title="' + title + '"></span>';
+            }).join('');
 
         const cold = coldClass(meta.lastTs || 0);
         const ago = timeAgo(meta.lastTs || 0);
@@ -2643,7 +2700,11 @@
           div.querySelector('.subtitle').textContent = subTitleText;
           div.querySelector('.subtitle').setAttribute('title', meta.cwd || '');
           div.querySelector('.status-txt').textContent = statusWithAgo;
-          div.querySelector('.strip').innerHTML = stripHtml;
+          const stripEl = div.querySelector('.strip');
+          stripEl.innerHTML = stripHtml;
+          stripEl.setAttribute('title', stripTitle);
+          stripEl.setAttribute('data-tt', toolEvents.length);
+          stripEl.setAttribute('data-filled', filledBins);
           const cb = div.querySelector('.cost-badge');
           if (costBadge) {
             cb.innerHTML = costBadge;  // contains <span class="coin"></span>

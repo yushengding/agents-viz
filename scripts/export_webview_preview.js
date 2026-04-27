@@ -124,6 +124,33 @@ const events = [
     mkEvt('eeee5555', '~/projects/example_trading', 'Stop', { session_title: 'two-day-sleeper' }, -2 * 24 * 60 * 60 * 1000 + 5000),
 ];
 
+// Strip mode: per-event, dynamic cell count, last 1h.
+
+// Session #1 — past 1h, one random tool every 5 minutes (12 events total).
+// Deterministic pseudo-random so screenshots are reproducible.
+const RAND_TOOLS = ['Bash','Read','Edit','Grep','WebFetch','Task','TodoWrite','Write'];
+function _rand(seed) { let x = seed * 9301 + 49297; return ((x % 233280) / 233280); }
+for (let i = 0; i < 12; i++) {
+    const ageMin = 60 - (i + 1) * 5; // i=0 → 55min ago, i=11 → 0min ago
+    const tool = RAND_TOOLS[Math.floor(_rand(i + 1) * RAND_TOOLS.length)];
+    events.push(mkEvt('ffff6666', '~/projects/example_full', 'PreToolUse',
+        { session_title: '5min-cadence', tool_name: tool, tool_input: { file_path: 'demo' } },
+        -ageMin * 60 * 1000));
+}
+// Sticky "live now" event so this card sits at the top of the sidebar.
+events.push(mkEvt('ffff6666', '~/projects/example_full', 'PreToolUse',
+    { session_title: '5min-cadence', tool_name: 'Bash', tool_input: { command: 'echo live now' } }, 100));
+
+// Session DENSE — 1000 events spread across last 1h, random tools. Verifies dots
+// don't break layout at high cardinality (each dot is 2px wide; 1000 dots overlap
+// into a density cloud).
+for (let i = 0; i < 1000; i++) {
+    const ageMs = Math.floor(_rand(i + 100) * 60 * 60 * 1000); // 0..60min ago
+    const tool = RAND_TOOLS[Math.floor(_rand(i + 9999) * RAND_TOOLS.length)];
+    events.push(mkEvt('dddddense', '~/projects/example_dense', 'PreToolUse',
+        { session_title: 'dense-1000', tool_name: tool }, -ageMs));
+}
+
 const darkThemeCss = `
 <style>
   :root {
