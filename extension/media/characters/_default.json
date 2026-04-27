@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "name": "lpc_default",
+  "source": "pixel-agents LPC sprite sheets",
+  "sheet": { "width": 336, "height": 288 },
+  "cell":  { "width": 48,  "height": 96 },
+  "grid":  { "cols": 7, "rows": 3 },
+  "displayCell": { "width": 48, "height": 96 },
+  "frames": {
+    "walk1":     { "col": 0, "row": 0 },
+    "idle":      { "col": 1, "row": 0 },
+    "walk3":     { "col": 2, "row": 0 },
+    "type1":     { "col": 3, "row": 0 },
+    "type2":     { "col": 4, "row": 0 },
+    "read1":     { "col": 5, "row": 0 },
+    "read2":     { "col": 6, "row": 0 },
+    "rightIdle": { "col": 1, "row": 2 }
+  }
+}

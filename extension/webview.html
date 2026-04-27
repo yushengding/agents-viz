@@ -130,7 +130,7 @@
       display: flex; align-items: flex-end; justify-content: center; overflow: hidden;
     }
     .modal .session-summary .avatar .pixel {
-      width: 48px; height: 96px;
+      width: var(--display-w, 48px); height: var(--display-h, 96px);
       background-image: var(--sprite-url);
       background-size: 336px 288px; background-position: 0 0; background-repeat: no-repeat;
       image-rendering: pixelated;
@@ -180,7 +180,7 @@
       overflow: hidden;
     }
     .avatar .pixel {
-      width: 48px; height: 96px;
+      width: var(--display-w, 48px); height: var(--display-h, 96px);
       background-image: var(--sprite-url);
       background-size: 336px 288px;
       background-position: 0 0;
@@ -199,10 +199,10 @@
     /* Default busy = walking down (cols 0→2→1→2 cycle) */
     .avatar.busy .pixel { animation: walkDown 0.55s steps(1) infinite; }
     @keyframes walkDown {
-      0%,100% { background-position:   0px 0px; }   /* walk1 */
-      25%     { background-position: -48px 0px; }   /* walk2 = idle stance */
-      50%     { background-position: -96px 0px; }   /* walk3 */
-      75%     { background-position: -48px 0px; }
+      0%,100% { background-position: 0 0; }   /* walk1 */
+      25%     { background-position: -48px 0; }   /* walk2 = idle stance */
+      50%     { background-position: -96px 0; }   /* walk3 */
+      75%     { background-position: -48px 0; }
     }
 
     /* ─── IDLE: character stands bottom-left, SOFA as background decor ─── */
@@ -229,9 +229,9 @@
     }
     @keyframes idleSway {
       /* col 1 = idle stance most of the time, brief shift to col 0/col 2 for weight change */
-      0%,   100% { background-position: -48px 0px; }   /* col 1 */
-      30%, 55%   { background-position: 0px    0px; }  /* col 0 (subtle lean) */
-      60%, 85%   { background-position: -96px  0px; }  /* col 2 (other side) */
+      0%,   100% { background-position: -48px 0; }   /* col 1 */
+      30%, 55%   { background-position: 0 0; }  /* col 0 (subtle lean) */
+      60%, 85%   { background-position: -96px 0; }  /* col 2 (other side) */
     }
     @keyframes idleNod {
       0%,100% { transform: translateY(0); }
@@ -340,8 +340,8 @@
       animation: idleWave 1.4s steps(1) infinite;
     }
     @keyframes idleWave {
-      0%,  50%, 100% { background-position: -144px 0px; }   /* col 3 = type1 */
-      25%, 75%       { background-position: -192px 0px; }   /* col 4 = type2 */
+      0%,  50%, 100% { background-position: -144px 0; }   /* col 3 = type1 */
+      25%, 75%       { background-position: -192px 0; }   /* col 4 = type2 */
     }
     .avatar.idle.idle-v5::after {
       content: '~';
@@ -425,11 +425,11 @@
     /* thinking: stand still on col 1 (idle stance), subtle bob */
     .avatar.busy.action-thinking .pixel {
       animation: thinkBob 1.6s ease-in-out infinite;
-      background-position: -48px 0px;
+      background-position: -48px 0;
     }
     @keyframes thinkBob {
-      0%,100% { background-position: -48px 0px; transform: translateY(0); }
-      50%     { background-position: -48px 0px; transform: translateY(-2px); }
+      0%,100% { background-position: -48px 0; transform: translateY(0); }
+      50%     { background-position: -48px 0; transform: translateY(-2px); }
     }
 
     /* coding (Bash): TYPE animation row 0 cols 3-4 */
@@ -437,8 +437,8 @@
       animation: typeCycle 0.3s steps(1) infinite;
     }
     @keyframes typeCycle {
-      0%,100% { background-position: -144px 0px; }  /* col 3 = type1 */
-      50%     { background-position: -192px 0px; }  /* col 4 = type2 */
+      0%,100% { background-position: -144px 0; }  /* col 3 = type1 */
+      50%     { background-position: -192px 0; }  /* col 4 = type2 */
     }
 
     /* writing (Edit/Write): same TYPE animation, slightly slower */
@@ -451,8 +451,8 @@
       animation: readCycle 0.7s steps(1) infinite;
     }
     @keyframes readCycle {
-      0%,100% { background-position: -240px 0px; }  /* col 5 = read1 */
-      50%     { background-position: -288px 0px; }  /* col 6 = read2 */
+      0%,100% { background-position: -240px 0; }  /* col 5 = read1 */
+      50%     { background-position: -288px 0; }  /* col 6 = read2 */
     }
 
     /* web (WebFetch/WebSearch): READ animation but facing UP (row 1) — looking up at screen */
@@ -477,11 +477,11 @@
     /* planning (TodoWrite): read pose with slow tilt (checking a list) */
     .avatar.busy.action-planning .pixel {
       animation: planList 1.0s ease-in-out infinite alternate;
-      background-position: -240px 0px;    /* col 5 = read1 */
+      background-position: -240px 0;    /* col 5 = read1 */
     }
     @keyframes planList {
-      from { background-position: -240px 0px; transform: translateY(0); }
-      to   { background-position: -288px 0px; transform: translateY(-1px); }
+      from { background-position: -240px 0; transform: translateY(0); }
+      to   { background-position: -288px 0; transform: translateY(-1px); }
     }
     @keyframes bob {
       0%, 100% { transform: translateY(0); }
@@ -898,6 +898,60 @@
       bottom: 6px; /* sit on top of sofa cushion, feet/legs visible */
       z-index: 4; /* on top of the low sofa */
     }
+    /* Chars that opt-in (data-has-sit=1) use their OWN sit frame on stale state,
+       and the sofa decoration is hidden (their sprite carries its own chair/seat). */
+    .room-char.stale[data-has-sit="1"] .pixel {
+      background-position: 0 -64px !important;
+      animation: none !important;
+      bottom: 4px;          /* character at floor — chair drawn behind/around */
+    }
+    .room-char.stale[data-has-sit="1"] .pixel.busy,
+    .room-char.stale[data-has-sit="1"] .pixel.waiting,
+    .room-char.stale[data-has-sit="1"] .pixel.monitoring {
+      animation: none !important;
+      background-position: 0 -64px !important;
+    }
+    /* For chars with their own sit pose: hide the big LPC sofa, but draw a chunky
+       pixel chair under+behind the character so they look properly seated. */
+    .room-char.stale[data-has-sit="1"] .desk-item { display: none !important; }
+    /* Tall chair backrest — sits above the elevated seat */
+    .room-char.stale[data-has-sit="1"]::before {
+      content: '';
+      position: absolute;
+      left: -2px; right: -2px; bottom: 28px; height: 32px;
+      background: #6b5a45;
+      border: 2px solid #2d2419;
+      border-radius: 3px 3px 1px 1px;
+      box-shadow: inset 0 2px 0 rgba(255,255,255,0.18),
+                  inset 0 -2px 0 rgba(0,0,0,0.35);
+      z-index: 1;
+      transform: none;
+      width: auto;
+    }
+    /* Bar-stool style: tall legs (16px) + thicker seat (8px) */
+    .room-char.stale[data-has-sit="1"]::after {
+      content: '';
+      position: absolute;
+      left: -4px; right: -4px; bottom: 0; height: 26px;
+      background:
+        /* leg gap (bottom 18px transparent) + seat plate (top 8px) */
+        linear-gradient(to bottom,
+          #6b5a45 0, #6b5a45 8px,
+          transparent 8px, transparent 26px),
+        /* legs: two vertical bars 3px wide, 18px tall */
+        linear-gradient(to right,
+          transparent 5px, #3a2f22 5px, #3a2f22 8px,
+          transparent 8px, transparent calc(100% - 8px),
+          #3a2f22 calc(100% - 8px), #3a2f22 calc(100% - 5px),
+          transparent calc(100% - 5px));
+      border: 2px solid #2d2419;
+      border-top-width: 0;
+      border-radius: 0 0 3px 3px;
+      z-index: 3;            /* in front of pixel so legs hide character feet behind seat */
+      transform: none;
+      width: auto;
+      box-shadow: none;
+    }
     /* Sofa backrest behind character (uses shared --sofa-* palette) */
     .room-char.stale::before {
       content: ''; display: block; position: absolute;
@@ -1241,12 +1295,15 @@
 
     .room-char .pixel {
       position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%);
+      /* Display size kept compact for room layout density; sheet/cell come from manifest. */
       width: 32px; height: 64px;
       background-image: var(--sprite-url);
-      background-size: 224px 192px; background-position: 0 0; background-repeat: no-repeat;
+      background-size: 224px 192px;
+      background-position: -32px 0;  /* idle = col 1 */
+      background-repeat: no-repeat;
       image-rendering: pixelated;
       filter: drop-shadow(0 2px 0 rgba(0,0,0,0.35));
-      z-index: 2; /* between chair (1) and desk (3) — legs hidden */
+      z-index: 2;
     }
     /* When busy → typing animation using cols 3-4 of sprite row 0 (type frames) */
     .room-char .pixel.busy    { animation: typeAtDesk 0.35s steps(1) infinite; }
@@ -1261,9 +1318,10 @@
       50%     { transform: translateX(-50%) translateY(-1px); }
     }
     @keyframes typeAtDesk {
-      0%   { background-position:  -96px 0; }
+      /* Cycle col 3 ↔ col 4 (typing frames) — uses --cell-w from per-char manifest */
+      0%   { background-position: -96px 0; }
       50%  { background-position: -128px 0; }
-      100% { background-position:  -96px 0; }
+      100% { background-position: -96px 0; }
     }
 
     /* Name tag only on hover or selected */
@@ -1674,6 +1732,49 @@
   <script>
     const vscode = acquireVsCodeApi();
     const SPRITES = __SPRITE_URIS__;
+    // Per-char sprite manifests: each entry has sheet/cell/grid/frames metadata.
+    // Falls back to LPC defaults when entry is null/undefined.
+    const SPRITE_MANIFESTS = (typeof __SPRITE_MANIFESTS__ !== 'undefined') ? __SPRITE_MANIFESTS__ : [];
+    const DEFAULT_MANIFEST = {
+      sheet: { width: 336, height: 288 },
+      cell: { width: 48, height: 96 },
+      displayCell: { width: 48, height: 96 },
+      grid: { cols: 7, rows: 3 },
+      frames: {
+        walk1: {col:0,row:0}, idle: {col:1,row:0}, walk3: {col:2,row:0},
+        type1: {col:3,row:0}, type2: {col:4,row:0},
+        read1: {col:5,row:0}, read2: {col:6,row:0},
+        rightIdle: {col:1,row:2}
+      }
+    };
+    function getManifest(charIdx) {
+      return (SPRITE_MANIFESTS && SPRITE_MANIFESTS[charIdx]) || DEFAULT_MANIFEST;
+    }
+    /** Apply sprite metadata as CSS variables on an element. */
+    function applySpriteVars(el, charIdx) {
+      const m = getManifest(charIdx);
+      el.style.setProperty('--sprite-url', 'url("' + (SPRITES[charIdx] || '') + '")');
+      el.style.setProperty('--sheet-w', m.sheet.width + 'px');
+      el.style.setProperty('--sheet-h', m.sheet.height + 'px');
+      el.style.setProperty('--cell-w', m.cell.width + 'px');
+      el.style.setProperty('--cell-h', m.cell.height + 'px');
+      el.style.setProperty('--display-w', (m.displayCell?.width || m.cell.width) + 'px');
+      el.style.setProperty('--display-h', (m.displayCell?.height || m.cell.height) + 'px');
+      // Opt-in flag: only chars whose manifest declares a `sitOnSofa` frame get the
+      // sofa-state seated override. LPC default has no sitOnSofa → flag stays absent.
+      if (m.frames && m.frames.sitOnSofa) {
+        el.setAttribute('data-has-sit', '1');
+      } else {
+        el.removeAttribute('data-has-sit');
+      }
+      el._manifest = m;
+    }
+    /** Get pixel-position string for a named frame. */
+    function framePos(charIdx, frameName) {
+      const m = getManifest(charIdx);
+      const f = (m.frames && m.frames[frameName]) || m.frames.idle || {col:0,row:0};
+      return `-${f.col * m.cell.width}px -${f.row * m.cell.height}px`;
+    }
     const ROOM_IMAGES = __ROOM_IMAGES__;
     // Defensive defaults: when an older extension build hasn't been reloaded
     // (Developer: Reload Window), it won't know about new placeholder tokens and
@@ -2465,11 +2566,23 @@
           // First time: create the card DOM
           const div = document.createElement('div');
           div.dataset.sid = sid;
+          // Build inline CSS-vars string from sprite manifest so per-char dims (sheet/cell) apply.
+          const _m = getManifest(meta.charIdx || 0);
+          const _hasSit = !!(_m.frames && _m.frames.sitOnSofa);
+          const _spriteVars =
+            '--sprite-url:url(&quot;' + spriteUrl + '&quot;);' +
+            '--sheet-w:' + _m.sheet.width + 'px;' +
+            '--sheet-h:' + _m.sheet.height + 'px;' +
+            '--cell-w:' + _m.cell.width + 'px;' +
+            '--cell-h:' + _m.cell.height + 'px;' +
+            '--display-w:' + (_m.displayCell?.width || _m.cell.width) + 'px;' +
+            '--display-h:' + (_m.displayCell?.height || _m.cell.height) + 'px;';
           // Sidebar avatar uses the SAME .room-char structure as the floor plan —
           // same sofa/bed/desk visuals, driven by the same CSS variables.
+          const _sitAttr = _hasSit ? ' data-has-sit="1"' : '';
           div.innerHTML =
             '<div class="avatar avatar-host">' +
-              '<div class="room-char sidebar-char" style="--sprite-url:url(&quot;' + spriteUrl + '&quot;)">' +
+              '<div class="room-char sidebar-char"' + _sitAttr + ' style="' + _spriteVars + '">' +
                 '<div class="pixel"></div>' +
                 '<div class="desk-item"></div>' +
                 '<div class="char-badge"></div>' +
@@ -2828,7 +2941,7 @@
             cDiv = document.createElement('div');
             cDiv.dataset.sid = sid;
             cDiv.className = 'pod-cell' + (sid === state.selected ? ' selected' : '');
-            cDiv.style.setProperty('--sprite-url', 'url("' + (SPRITES[meta.charIdx] || '') + '")');
+            applySpriteVars(cDiv, meta.charIdx);
             cDiv.innerHTML =
               '<div class="pod-shell"></div>' +
               '<div class="pod-dome"></div>' +
@@ -2842,7 +2955,7 @@
             cDiv = document.createElement('div');
             cDiv.dataset.sid = sid;
             cDiv.className = 'room-char' + (sid === state.selected ? ' selected' : '') + (meta.monitoring ? ' monitoring' : '') + (stale ? ' stale' : '');
-            cDiv.style.setProperty('--sprite-url', 'url("' + (SPRITES[meta.charIdx] || '') + '")');
+            applySpriteVars(cDiv, meta.charIdx);
             const pixelCls = stale ? '' : (meta.busy ? 'busy' : (meta.monitoring ? 'monitoring' : (meta.waiting ? 'waiting' : '')));
             let badge = '';
             if (meta.monitoring)         badge = '🔍';
@@ -3253,14 +3366,15 @@
         if (lastPrompt && lastTool) break;
       }
       const lastSeen = meta.lastTs ? timeAgo(meta.lastTs) + ' ago' : 'never';
-      const spriteUrl = SPRITES[meta.charIdx] || '';
+      const charIdx = meta.charIdx || 0;
+      const spriteUrl = SPRITES[charIdx] || '';
       const promptTxt = lastPrompt ? String(lastPrompt.prompt).slice(0, 120) : '(no prompt seen)';
       const toolTxt = lastTool
         ? lastTool.tool_name + (toolSummary(lastTool) ? ' · ' + toolSummary(lastTool) : '')
         : '(no tool use seen)';
 
       pendingDeleteSid = sid;
-      modalSummary.style.setProperty('--sprite-url', 'url("' + spriteUrl + '")');
+      applySpriteVars(modalSummary, charIdx);
       modalSummary.innerHTML =
         '<div class="avatar"><div class="pixel"></div></div>' +
         '<div class="info">' +

@@ -42,7 +42,7 @@ let server: http.Server | undefined;
 let discoveryFile: string | undefined;
 let authToken: string | undefined;
 let eventBuffer: HookEvent[] = [];
-const MAX_BUFFER = 1000;
+const MAX_BUFFER = 5000;  // raised 1000→5000 so live event ring keeps ~hours of activity
 
 // Dev hot-reload: poll dist/extension.js for changes, re-render webview HTML on save.
 // Only covers webview (HTML/CSS/JS) — changes to activate()/handlers still need reload.
@@ -695,8 +695,16 @@ export async function activate(context: vscode.ExtensionContext) {
             vscode.ViewColumn.Beside,
             { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [mediaRoot] }
         );
-        // Embed sprites as base64 data URIs to avoid any CSP/scheme issues in the webview.
+        // Embed sprites + per-char manifests (cell/sheet dims, frame map).
+        // Manifest enables flexible sprite sizes per char (v17c uses 96x192 cells,
+        // legacy LPC uses 48x96). webview reads manifest via CSS variables.
         const spriteUris: string[] = [];
+        const spriteManifests: any[] = [];
+        let defaultManifest: any = null;
+        try {
+            defaultManifest = JSON.parse(fs.readFileSync(
+                path.join(context.extensionPath, 'media', 'characters', '_default.json'), 'utf-8'));
+        } catch { /* no default — fall back to baked LPC dims */ }
         for (let i = 0; i < 6; i++) {
             const p = path.join(context.extensionPath, 'media', 'characters', `char_${i}.png`);
             try {
@@ -704,6 +712,13 @@ export async function activate(context: vscode.ExtensionContext) {
                 spriteUris.push('data:image/png;base64,' + b64);
             } catch {
                 spriteUris.push('');
+            }
+            // Per-char manifest (optional; falls back to _default.json)
+            const mp = path.join(context.extensionPath, 'media', 'characters', `char_${i}.json`);
+            try {
+                spriteManifests.push(JSON.parse(fs.readFileSync(mp, 'utf-8')));
+            } catch {
+                spriteManifests.push(defaultManifest);
             }
         }
         // Furniture sprites for sleeping state
@@ -723,7 +738,7 @@ export async function activate(context: vscode.ExtensionContext) {
             // First-load fast path: ship HTML with EMPTY usage/promptCosts so the
             // panel renders immediately. Heavy scans run async below and post results.
             panel.webview.html = buildWebviewHtml({
-                spriteUris, roomImages: rooms,
+                spriteUris, spriteManifests, roomImages: rooms,
                 extensionPath: context.extensionPath,
                 sofaFront, sofaSide,
                 sessionUsage: {},
@@ -752,7 +767,8 @@ export async function activate(context: vscode.ExtensionContext) {
                 }
                 let sessionsSent = 0;
                 let eventsSent = 0;
-                scanJsonlHistoryProgressive(workspace, 80, 15,
+                // Per-session 80→500 (~last hour of activity). sessionsPerProject 15→30.
+                scanJsonlHistoryProgressive(workspace, 500, 30,
                     (batch, sid) => {
                         if (!panel) return;
                         panel.webview.postMessage({ type: 'replay', data: batch });

@@ -7,6 +7,7 @@ import * as path from 'path';
 
 export interface BuildOpts {
     spriteUris: string[];
+    spriteManifests?: any[];   // per-char sheet/cell/frame metadata
     roomImages?: Record<string, string>;
     extensionPath: string;  // context.extensionPath
     sofaFront?: string;
@@ -35,6 +36,7 @@ export function buildWebviewHtml(opts: BuildOpts): string {
     // same line: typeof check + actual value branch.)
     return html
         .replace(/__SPRITE_URIS__/g, JSON.stringify(opts.spriteUris))
+        .replace(/__SPRITE_MANIFESTS__/g, JSON.stringify(opts.spriteManifests || []))
         .replace(/__ROOM_IMAGES__/g, JSON.stringify(opts.roomImages || {}))
         .replace(/__BUILD_STAMP__/g, buildStamp)
         .replace(/__SOFA_FRONT__/g, opts.sofaFront || '')

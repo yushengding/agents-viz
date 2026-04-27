@@ -21,6 +21,11 @@ html = html.replace(/__SOFA_SIDE__/g, '');
 
 // For preview, embed sprite images as base64 data URIs so Chrome can show them without localResourceRoots
 const sprites = [];
+const manifests = [];
+let defaultManifest = null;
+try {
+    defaultManifest = JSON.parse(fs.readFileSync(path.join(SPRITES_DIR, '_default.json'), 'utf8'));
+} catch { /* ok */ }
 for (let i = 0; i < 6; i++) {
     const p = path.join(SPRITES_DIR, `char_${i}.png`);
     if (fs.existsSync(p)) {
@@ -29,10 +34,17 @@ for (let i = 0; i < 6; i++) {
     } else {
         sprites.push('');
     }
+    const mp = path.join(SPRITES_DIR, `char_${i}.json`);
+    try {
+        manifests.push(JSON.parse(fs.readFileSync(mp, 'utf8')));
+    } catch {
+        manifests.push(defaultManifest);
+    }
 }
 html = html.replace(/__SPRITE_URIS__/g, JSON.stringify(sprites));
+html = html.replace(/__SPRITE_MANIFESTS__/g, JSON.stringify(manifests));
 html = html.replace(/__SESSION_USAGE__/g, JSON.stringify({
-    aaaa1111: { input: 12000, output: 4000, cacheCreate: 8000, cacheRead: 100000, cost: 1.42, models: ['claude-opus-4-7'], msgCount: 38 },
+    bb0002: { input: 12000, output: 4000, cacheCreate: 8000, cacheRead: 100000, cost: 1.42, models: ['claude-opus-4-7'], msgCount: 38 },
     bbbb2222: { input: 8000, output: 3500, cacheCreate: 4000, cacheRead: 60000, cost: 0.78, models: ['claude-opus-4-7'], msgCount: 22 },
     cccc3333: { input: 5000, output: 1500, cacheCreate: 2000, cacheRead: 25000, cost: 0.21, models: ['claude-opus-4-7'], msgCount: 9 },
     dddd4444: { input: 800, output: 200, cacheCreate: 0, cacheRead: 0, cost: 0.03, models: [], msgCount: 1 },
@@ -40,7 +52,7 @@ html = html.replace(/__SESSION_USAGE__/g, JSON.stringify({
 }));
 const _previewNow = Date.now();
 html = html.replace(/__PROMPT_COSTS__/g, JSON.stringify([
-    { sessionId: 'aaaa1111', promptText: 'tweak fusion UI legibility on mobile', promptTs: _previewNow - 1000, cost: 0.42, tokens: 18000, cwd: '~/projects/example_game' },
+    { sessionId: 'bb0002', promptText: 'tweak fusion UI legibility on mobile', promptTs: _previewNow - 1000, cost: 0.42, tokens: 18000, cwd: '~/projects/example_game' },
     { sessionId: 'bbbb2222', promptText: 'backtest VIX>30 entry with SPXL', promptTs: _previewNow - 2000, cost: 0.31, tokens: 12000, cwd: '~/projects/example_trading' },
     { sessionId: 'cccc3333', promptText: 'add pixel character avatars to the sidebar', promptTs: _previewNow - 3000, cost: 0.08, tokens: 4000, cwd: '~/projects/agents-viz' },
 ]));
@@ -57,19 +69,19 @@ const mkEvt = (sid, cwd, name, extras = {}, dt = 0) => ({
 // Realistic multi-session scenario: 3 concurrent Claude sessions with renames
 const events = [
     // Session A - stickerfort with custom-title "sticker-polish"
-    mkEvt('aaaa1111', '~/projects/example_game', 'SessionStart', { session_title: 'sticker-polish' }, 0),
-    mkEvt('aaaa1111', '~/projects/example_game', 'UserPromptSubmit',
+    mkEvt('bb0002', '~/projects/example_game', 'SessionStart', { session_title: 'sticker-polish' }, 0),
+    mkEvt('bb0002', '~/projects/example_game', 'UserPromptSubmit',
         { session_title: 'sticker-polish', prompt: 'tweak fusion UI legibility on mobile' }, 500),
-    mkEvt('aaaa1111', '~/projects/example_game', 'PreToolUse',
+    mkEvt('bb0002', '~/projects/example_game', 'PreToolUse',
         { session_title: 'sticker-polish', tool_name: 'Read', tool_input: { file_path: 'stickerfort/scripts/fusion_ui.gd' } }, 900),
-    mkEvt('aaaa1111', '~/projects/example_game', 'PostToolUse',
+    mkEvt('bb0002', '~/projects/example_game', 'PostToolUse',
         { session_title: 'sticker-polish', tool_name: 'Read' }, 950),
-    mkEvt('aaaa1111', '~/projects/example_game', 'PreToolUse',
+    mkEvt('bb0002', '~/projects/example_game', 'PreToolUse',
         { session_title: 'sticker-polish', tool_name: 'Edit', tool_input: { file_path: 'fusion_ui.gd' } }, 1200),
-    mkEvt('aaaa1111', '~/projects/example_game', 'PostToolUse',
+    mkEvt('bb0002', '~/projects/example_game', 'PostToolUse',
         { session_title: 'sticker-polish', tool_name: 'Edit' }, 1350),
     // Now running Bash — leave as busy state
-    mkEvt('aaaa1111', '~/projects/example_game', 'PreToolUse',
+    mkEvt('bb0002', '~/projects/example_game', 'PreToolUse',
         { session_title: 'sticker-polish', tool_name: 'Bash', tool_input: { command: 'cd stickerfort && godot --headless --quit-after 3 test_fusion.tscn' } }, 1500),
 
     // Session B - trading, renamed to "vix-backtest"
@@ -98,11 +110,12 @@ const events = [
     mkEvt('cccc3333', '~/projects/agents-viz', 'PreToolUse',
         { tool_name: 'Read', tool_input: { file_path: 'extension/src/extension.ts' } }, 1800),
 
-    // Session D - 10 min stale (sofa in Lounge)
-    mkEvt('dddd4444', '~/projects/example_game', 'SessionStart', { session_title: 'old-explore' }, -10 * 60 * 1000),
-    mkEvt('dddd4444', '~/projects/example_game', 'UserPromptSubmit',
-        { session_title: 'old-explore', prompt: 'what is in this project' }, -10 * 60 * 1000 + 500),
-    mkEvt('dddd4444', '~/projects/example_game', 'Stop', { session_title: 'old-explore' }, -10 * 60 * 1000 + 8000),
+    // Session D - 90 min stale (sofa in Lounge) — uses bb0002 charIdx=0 (v17c blonde)
+    //   to demo the new sit-on-sofa behaviour.
+    mkEvt('bb0002b', '~/projects/example_game', 'SessionStart', { session_title: 'sleepy-blonde' }, -90 * 60 * 1000),
+    mkEvt('bb0002b', '~/projects/example_game', 'UserPromptSubmit',
+        { session_title: 'sleepy-blonde', prompt: 'paused project' }, -90 * 60 * 1000 + 500),
+    mkEvt('bb0002b', '~/projects/example_game', 'Stop', { session_title: 'sleepy-blonde' }, -90 * 60 * 1000 + 8000),
 
     // Session E - 2 days stale (bed in Lounge)
     mkEvt('eeee5555', '~/projects/example_trading', 'SessionStart', { session_title: 'two-day-sleeper' }, -2 * 24 * 60 * 60 * 1000),
