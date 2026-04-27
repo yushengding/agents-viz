@@ -2615,7 +2615,28 @@
               break;
             }
           }
-          const tagTitle = name + ' · ' + sid + (lastPrompt ? '\n\n' + lastPrompt : '');
+          // Routing rationale: show file-vote distribution so user can see WHY
+          // a session landed where it did (esp. when it ended up in projects hub).
+          let routingHint = '';
+          if (meta.cwdFreq && meta.cwdFreq.size > 0) {
+            const sortedVotes = [...meta.cwdFreq.entries()].sort((a, b) => b[1] - a[1]);
+            const total = sortedVotes.reduce((s, [, n]) => s + n, 0);
+            const decision = sessionProject(meta);
+            const isCross = decision === '__cross__';
+            const isHub = isCross || decision === '~';
+            const verdict = isHub
+              ? (isCross
+                  ? 'cross-project (📁 hub) — runner-up/leader = ' + (sortedVotes[1][1] / sortedVotes[0][1]).toFixed(2) + ' ≥ 0.30'
+                  : '📁 hub (no clear leader)')
+              : '→ ' + decision;
+            routingHint = '\n\nRouting: ' + verdict + '\n';
+            for (const [p, n] of sortedVotes.slice(0, 5)) {
+              const pct = (100 * n / total).toFixed(0);
+              routingHint += '  ' + n.toFixed(0).padStart(4) + '  ' + (pct + '%').padStart(4) + '   ' + p + '\n';
+            }
+            if (sortedVotes.length > 5) routingHint += '  …(+ ' + (sortedVotes.length - 5) + ' more)\n';
+          }
+          const tagTitle = name + ' · ' + sid + (lastPrompt ? '\n\n' + lastPrompt : '') + routingHint;
           // Common: salary
           const usage = SESSION_USAGE[sid];
           let salaryHtml = '';
