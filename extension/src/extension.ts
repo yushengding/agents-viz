@@ -391,12 +391,23 @@ interface FileCacheEntry {
     prompts: PromptCost[];
 }
 const USAGE_CACHE_FILE = path.join(os.homedir(), '.agents-viz', 'usage-cache.json');
+// Bump when the cost formula (MODEL_PRICING table or 1h/5m cache split) changes
+// so existing on-disk entries get discarded instead of carrying stale dollar values.
+const CACHE_VERSION = 2;
+interface CacheFile { __version: number; entries: Record<string, FileCacheEntry>; }
 let _usageCache: Record<string, FileCacheEntry> | null = null;
 function getUsageCache(): Record<string, FileCacheEntry> {
     if (_usageCache) return _usageCache;
     try {
         const raw = fs.readFileSync(USAGE_CACHE_FILE, 'utf8');
-        _usageCache = JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        // v2+ format: { __version, entries }. Older flat-Record format is discarded.
+        if (parsed && typeof parsed === 'object' && parsed.__version === CACHE_VERSION) {
+            _usageCache = parsed.entries || {};
+        } else {
+            log(`usage cache version mismatch (have ${parsed?.__version ?? 'flat'}, want ${CACHE_VERSION}) — discarding`);
+            _usageCache = {};
+        }
     } catch { _usageCache = {}; }
     return _usageCache!;
 }
@@ -404,7 +415,8 @@ function saveUsageCache(): void {
     if (!_usageCache) return;
     try {
         fs.mkdirSync(path.dirname(USAGE_CACHE_FILE), { recursive: true });
-        fs.writeFileSync(USAGE_CACHE_FILE, JSON.stringify(_usageCache));
+        const wrapped: CacheFile = { __version: CACHE_VERSION, entries: _usageCache };
+        fs.writeFileSync(USAGE_CACHE_FILE, JSON.stringify(wrapped));
     } catch (e) { log(`save usage cache failed: ${(e as any).message}`); }
 }
 
