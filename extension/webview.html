@@ -1829,6 +1829,12 @@
     function projectName(cwd) {
       if (!cwd) return '(no cwd)';
       const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
+      // Workspace-root detection: if cwd ends exactly at a workspace anchor
+      // (e.g. ~/Desktop/projects with no project suffix), there's no project —
+      // return '~' so the caller routes to the 📁 projects hub instead of
+      // creating a literal "projects" / "Desktop" room.
+      const lastSeg = parts[parts.length - 1];
+      if (lastSeg && WORKSPACE_ANCHORS.has(lastSeg.toLowerCase())) return '~';
       // Two-level cap: scan forward, stop at first workspace anchor and take next segment.
       for (let i = 0; i < parts.length - 1; i++) {
         const p = parts[i].toLowerCase();
@@ -1849,6 +1855,11 @@
         const p = parts[i].toLowerCase();
         if (GENERIC_DIRS.has(p)) continue;
         if (CONTAINER_DIRS.has(p)) continue;
+        // A workspace anchor at the end (e.g. cwd = ~/Desktop/projects) means
+        // there's no project, just the workspace root — return '~' so the
+        // caller routes to the 📁 projects hub instead of creating a literal
+        // "projects" / "repos" room.
+        if (WORKSPACE_ANCHORS.has(p)) continue;
         if (usernameIdxs.has(i)) continue;
         return parts[i];
       }
