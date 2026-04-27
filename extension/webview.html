@@ -1466,9 +1466,115 @@
     #filter-bar { padding: 6px 16px; border-bottom: 1px solid var(--vscode-panel-border); font-size: 11px; display: flex; gap: 12px; opacity: 0.7; }
     #filter-bar label { cursor: pointer; user-select: none; }
     #filter-bar input[type=checkbox] { margin-right: 4px; vertical-align: middle; }
+
+    /* ---- Char hover popover: rich tooltip with vote distribution chart ---- */
+    #char-popover {
+      position: fixed;
+      z-index: 9999;
+      pointer-events: none;
+      display: none;
+      width: 320px;
+      max-width: 90vw;
+      background: linear-gradient(180deg, #1f2532 0%, #161b25 100%);
+      border: 1.5px solid #3a4860;
+      border-radius: 6px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04) inset;
+      color: #d8dde6;
+      font-size: 11px;
+      line-height: 1.45;
+      font-family: var(--vscode-font-family, sans-serif);
+    }
+    #char-popover.show { display: block; }
+    #char-popover .pop-header {
+      padding: 8px 10px 6px;
+      border-bottom: 1px solid #2a3344;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    #char-popover .pop-name {
+      font-weight: 700; color: #fff; font-size: 12px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+    }
+    #char-popover .pop-sid {
+      font-family: monospace; font-size: 9px; color: #7a8aa0; letter-spacing: 0.02em;
+    }
+    #char-popover .pop-verdict {
+      padding: 6px 10px;
+      font-size: 10.5px;
+      border-bottom: 1px solid #2a3344;
+      background: rgba(255,255,255,0.02);
+    }
+    #char-popover .pop-verdict.routed { color: #aef0a8; }
+    #char-popover .pop-verdict.cross  { color: #ffc36b; }
+    #char-popover .pop-verdict.hub    { color: #9bb4dd; }
+    #char-popover .pop-verdict .v-label { color: #7a8aa0; margin-right: 6px; }
+    #char-popover .pop-prompt {
+      padding: 6px 10px;
+      color: #b8c2d4;
+      font-style: italic;
+      max-height: 60px; overflow: hidden;
+      border-bottom: 1px solid #2a3344;
+      white-space: pre-wrap;
+    }
+    #char-popover .pop-section-title {
+      padding: 6px 10px 2px;
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6a7a92;
+    }
+    #char-popover .pop-votes {
+      padding: 0 10px 8px;
+      display: grid;
+      grid-template-columns: 1fr 38px 30px;
+      gap: 3px 6px;
+      align-items: center;
+    }
+    #char-popover .pop-votes .vote-bar {
+      position: relative;
+      height: 14px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #char-popover .pop-votes .vote-bar .fill {
+      position: absolute; left: 0; top: 0; bottom: 0;
+      background: linear-gradient(90deg, #4a8be0 0%, #6aa8ff 100%);
+      border-radius: 2px;
+    }
+    #char-popover .pop-votes .vote-bar.leader .fill {
+      background: linear-gradient(90deg, #57c45a 0%, #8ee382 100%);
+    }
+    #char-popover .pop-votes .vote-bar.cross-leader .fill {
+      background: linear-gradient(90deg, #d9a848 0%, #f0c870 100%);
+    }
+    #char-popover .pop-votes .vote-bar .label {
+      position: relative; z-index: 1;
+      padding: 0 6px; line-height: 14px;
+      font-size: 10.5px; color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #char-popover .pop-votes .vote-count {
+      text-align: right;
+      font-family: monospace; font-size: 10px; color: #aab4c4;
+    }
+    #char-popover .pop-votes .vote-pct {
+      text-align: right;
+      font-family: monospace; font-size: 10px; color: #7a8aa0;
+    }
+    #char-popover .pop-more {
+      padding: 0 10px 8px;
+      font-size: 10px; color: #6a7a92;
+      font-style: italic;
+    }
+    #char-popover .pop-empty {
+      padding: 8px 10px;
+      font-size: 10px; color: #6a7a92;
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
+  <div id="char-popover"></div>
   <div id="app">
     <aside id="sidebar">
       <div id="sidebar-header">
@@ -1816,6 +1922,94 @@
         return sorted[0][0];
       }
       return projectName(meta.cwd);
+    }
+
+    // ---- Rich hover popover (replaces native title tooltip on chars) ----
+    function buildCharPopoverHtml({ name, sid, lastPrompt, meta }) {
+      const decision = sessionProject(meta);
+      const isCross = decision === '__cross__';
+      const isHub = isCross || decision === '~';
+      const verdictCls = isCross ? 'cross' : (isHub ? 'hub' : 'routed');
+      let verdictText;
+      if (isCross) {
+        const sorted = [...meta.cwdFreq.entries()].sort((a, b) => b[1] - a[1]);
+        const ratio = (sorted[1][1] / sorted[0][1]).toFixed(2);
+        verdictText = '📁 cross-project hub · runner-up/leader ' + ratio + ' ≥ 0.30';
+      } else if (decision === '~') {
+        verdictText = '📁 projects hub (workspace root, no clear project)';
+      } else if (decision === '(no cwd)' || decision === '(pending)') {
+        verdictText = '☕ Lounge · ' + decision;
+      } else {
+        verdictText = '🏠 → ' + decision;
+      }
+
+      let votesHtml = '';
+      if (meta.cwdFreq && meta.cwdFreq.size > 0) {
+        const sorted = [...meta.cwdFreq.entries()].sort((a, b) => b[1] - a[1]);
+        const total = sorted.reduce((s, [, n]) => s + n, 0);
+        const max = sorted[0][1];
+        votesHtml = '<div class="pop-section-title">file-vote distribution</div><div class="pop-votes">';
+        const top = sorted.slice(0, 6);
+        for (let i = 0; i < top.length; i++) {
+          const [p, n] = top[i];
+          const pct = (100 * n / total);
+          const widthPct = Math.max(2, (n / max) * 100);
+          let barCls = 'vote-bar';
+          if (i === 0) barCls += isCross ? ' cross-leader' : ' leader';
+          votesHtml +=
+            '<div class="' + barCls + '">' +
+              '<div class="fill" style="width:' + widthPct.toFixed(1) + '%"></div>' +
+              '<div class="label">' + escapeHtml(p) + '</div>' +
+            '</div>' +
+            '<div class="vote-count">' + n.toFixed(0) + '</div>' +
+            '<div class="vote-pct">' + pct.toFixed(0) + '%</div>';
+        }
+        votesHtml += '</div>';
+        if (sorted.length > 6) {
+          votesHtml += '<div class="pop-more">…+ ' + (sorted.length - 6) + ' more, ' + total.toFixed(0) + ' total votes</div>';
+        }
+      } else {
+        votesHtml = '<div class="pop-empty">No file edits yet — routed by cwd only.</div>';
+      }
+
+      return (
+        '<div class="pop-header">' +
+          '<div class="pop-name">' + escapeHtml(name) + '</div>' +
+          '<div class="pop-sid">' + escapeHtml(sid.slice(0, 8)) + '</div>' +
+        '</div>' +
+        '<div class="pop-verdict ' + verdictCls + '">' +
+          '<span class="v-label">Routing</span>' + escapeHtml(verdictText) +
+        '</div>' +
+        (lastPrompt ? '<div class="pop-prompt">' + escapeHtml(lastPrompt) + '</div>' : '') +
+        votesHtml
+      );
+    }
+    function _popEl() { return document.getElementById('char-popover'); }
+    function onCharHover(ev) {
+      const pop = _popEl(); if (!pop) return;
+      const html = ev.currentTarget.dataset.popoverHtml; if (!html) return;
+      pop.innerHTML = html;
+      pop.classList.add('show');
+      _positionPopover(ev);
+    }
+    function onCharMove(ev) { _positionPopover(ev); }
+    function onCharLeave() {
+      const pop = _popEl(); if (!pop) return;
+      pop.classList.remove('show');
+    }
+    function _positionPopover(ev) {
+      const pop = _popEl(); if (!pop || !pop.classList.contains('show')) return;
+      const W = pop.offsetWidth, H = pop.offsetHeight;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const PAD = 12;
+      let x = ev.clientX + 16;
+      let y = ev.clientY + 16;
+      if (x + W + PAD > vw) x = ev.clientX - W - 16;
+      if (y + H + PAD > vh) y = vh - H - PAD;
+      if (x < PAD) x = PAD;
+      if (y < PAD) y = PAD;
+      pop.style.left = x + 'px';
+      pop.style.top  = y + 'px';
     }
 
     // Workspace anchors: the segment right after one of these = project root.
@@ -2615,28 +2809,11 @@
               break;
             }
           }
-          // Routing rationale: show file-vote distribution so user can see WHY
-          // a session landed where it did (esp. when it ended up in projects hub).
-          let routingHint = '';
-          if (meta.cwdFreq && meta.cwdFreq.size > 0) {
-            const sortedVotes = [...meta.cwdFreq.entries()].sort((a, b) => b[1] - a[1]);
-            const total = sortedVotes.reduce((s, [, n]) => s + n, 0);
-            const decision = sessionProject(meta);
-            const isCross = decision === '__cross__';
-            const isHub = isCross || decision === '~';
-            const verdict = isHub
-              ? (isCross
-                  ? 'cross-project (📁 hub) — runner-up/leader = ' + (sortedVotes[1][1] / sortedVotes[0][1]).toFixed(2) + ' ≥ 0.30'
-                  : '📁 hub (no clear leader)')
-              : '→ ' + decision;
-            routingHint = '\n\nRouting: ' + verdict + '\n';
-            for (const [p, n] of sortedVotes.slice(0, 5)) {
-              const pct = (100 * n / total).toFixed(0);
-              routingHint += '  ' + n.toFixed(0).padStart(4) + '  ' + (pct + '%').padStart(4) + '   ' + p + '\n';
-            }
-            if (sortedVotes.length > 5) routingHint += '  …(+ ' + (sortedVotes.length - 5) + ' more)\n';
-          }
-          const tagTitle = name + ' · ' + sid + (lastPrompt ? '\n\n' + lastPrompt : '') + routingHint;
+          // Compute rich popover HTML (replaces native title tooltip)
+          const popoverHtml = buildCharPopoverHtml({ name, sid, lastPrompt, meta });
+          // Keep tagTitle as a minimal fallback for screen readers / cases where
+          // popover JS doesn't run; popover replaces it visually.
+          const tagTitle = name + ' · ' + sid;
           // Common: salary
           const usage = SESSION_USAGE[sid];
           let salaryHtml = '';
@@ -2679,6 +2856,10 @@
               '<div class="char-tag">' + escapeHtml(name) + '</div>';
           }
           cDiv.setAttribute('title', tagTitle);
+          cDiv.dataset.popoverHtml = popoverHtml;
+          cDiv.addEventListener('mouseenter', onCharHover);
+          cDiv.addEventListener('mouseleave', onCharLeave);
+          cDiv.addEventListener('mousemove', onCharMove);
           cDiv.addEventListener('click', (ev) => {
             ev.stopPropagation();
             state.selected = sid;
