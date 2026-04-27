@@ -1825,10 +1825,34 @@
       'projects', 'repos', 'workspace', 'workspaces'
     ]);
 
-    /** Project-root-ish name: prefer two-level cap at workspace anchor; fall back to walk-up. */
+    // Names that look like projects but aren't — produced when projectName()
+    // walks up a malformed/relative file_path. Any vote landing on these is
+    // dropped so it doesn't push a session into the cross-project hub.
+    //   - Anything with a file extension (SKILL.md, settings.json, .wslconfig,
+    //     output.txt, etc.) — that's a filename, not a directory.
+    //   - The Claude Code session-storage hash dirs that start with `C--` /
+    //     `c--` (e.g. C--Users-Yusheng-Ding-Desktop-projects) — these leak
+    //     into votes whenever file_path points into ~/.claude/projects/<hash>/.
+    function isBogusProjectName(s) {
+      if (!s) return true;
+      // C-- / c-- hash dir prefix (Claude Code session-storage)
+      if (/^[Cc]--/.test(s)) return true;
+      // dotfile (.wslconfig, .gitignore, .env)
+      if (s.startsWith('.')) return true;
+      // has an extension (foo.md, bar.json, baz.sh, x.py …)
+      if (/\.[A-Za-z0-9]{1,8}$/.test(s)) return true;
+      return false;
+    }
+
+    /** Project-root-ish name: prefer two-level cap at workspace anchor; fall back to walk-up.
+     *  Returns null when the input resolves to something that's clearly not a project
+     *  (a filename, a Claude Code hash dir) — callers should skip these in voting. */
     function projectName(cwd) {
       if (!cwd) return '(no cwd)';
-      const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
+      const raw = cwd.replace(/\\/g, '/');
+      // Special: ~/.claude/projects/<hash>/... should never count as a project at all
+      if (/\/\.claude\/projects\//i.test(raw)) return null;
+      const parts = raw.split('/').filter(Boolean);
       // Workspace-root detection: if cwd ends exactly at a workspace anchor
       // (e.g. ~/Desktop/projects with no project suffix), there's no project —
       // return '~' so the caller routes to the 📁 projects hub instead of
@@ -1861,6 +1885,11 @@
         // "projects" / "repos" room.
         if (WORKSPACE_ANCHORS.has(p)) continue;
         if (usernameIdxs.has(i)) continue;
+        // Skip filenames (.md, .json, .sh, …) and Claude Code hash dirs (C--…).
+        // Without this, sessions that Read settings.json or session JSONLs
+        // accumulate bogus "project" votes for those names and end up looking
+        // cross-project when they aren't.
+        if (isBogusProjectName(parts[i])) continue;
         return parts[i];
       }
       return '~';
