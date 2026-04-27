@@ -285,27 +285,45 @@ Numbers from `~/.claude/projects/<hash>/<sid>.jsonl` for the two sessions where
 |--------|-------|
 | Sessions | **2** |
 | Calendar span | **6.8 days** (2026-04-20 → 2026-04-27) |
-| Messages exchanged | **~11,000** (~5,500 per session) |
+| Real user prompts | **~950** across both sessions |
+| JSONL records | ~18,400 (prompts + tool calls + tool results + assistant replies) |
 | Total tokens | **~4.9 billion** (input + output + cache create + cache read) |
-| Estimated cost (Opus 4.7) | **~$10,400 USD** |
+| Estimated cost (Opus 4.7 API list) | **~$3,985 USD** |
 | Code shipped | ~3,000 lines `webview.html` + ~880 lines `extension.ts` + ~140 tracked files |
 
-Caveats on the cost number:
+Cost breakdown:
 
-- The pricing model used is Opus 4.7 list price (input $15/M, output $75/M,
-  cache create $18.75/M, cache read $1.5/M) computed locally — the real
-  invoice may vary slightly.
-- Most of the cost is **cache reads** on the 3000-line `webview.html`. Long
-  sessions touching one big file are expensive. A hypothetical Sonnet-only
-  rebuild would likely come in around 1/3 of the price.
-- Wall-clock span (6.8 days) is *not* active typing time. Active interactive
-  hours are closer to 30–50.
-- This is the worked-example *upper bound*: extended thinking enabled, Opus
-  exclusively, no Sonnet fallback, no human typing acceleration.
+| Line item | Tokens | Price | Subtotal |
+|-----------|-------:|------:|---------:|
+| Input (uncached) | 0.08 M | $5/M | $0.38 |
+| Output | 15.5 M | $25/M | $388 |
+| Cache write — 1h TTL | 116 M | $10/M | $1,160 |
+| Cache write — 5m TTL | 1.2 M | $6.25/M | $8 |
+| **Cache read** | **4,858 M** | **$0.50/M** | **$2,429** (61%) |
+| **Total** | | | **~$3,985** |
+
+Caveats:
+
+- Pricing uses current Anthropic list rates for Claude Opus 4.7
+  (input $5/M, output $25/M, 5m cache write $6.25/M, 1h cache write $10/M,
+  cache read $0.50/M) computed locally — the real invoice may vary slightly.
+- **61% of the cost is cache reads.** Each turn re-ships the conversation
+  context (cached at 10% of base input) — long sessions have super-linear
+  cost growth. A `/compact` partway through would have meaningfully reduced
+  this.
+- Both sessions were workspace-root sessions doing agents-viz development
+  *and* parallel work (sprite generation, exploration, meta) in the same
+  conversation. About **23% of the prompts (~222) directly touched
+  agents-viz code** — the other 77% counted because they shared the same
+  cached context. So the "agents-viz-specific" cost is closer to **$1K**;
+  the rest of the $4K is the parallel stream.
+- Wall-clock span (6.8 days) is not active typing time. Active interactive
+  hours were closer to 30–50.
 
 If you're evaluating "what does it cost to vibe-code a non-trivial VS Code
-extension end-to-end with the strongest available model?" — that's roughly
-$10K, six days, two sessions.
+extension end-to-end on Opus 4.7?" — the API-equivalent is roughly **$1K
+of focused work or $4K of mixed-bag long sessions**, six days, two
+conversations.
 
 See [`DEVLOG.md`](DEVLOG.md) for a milestone-by-milestone story of the build.
 

@@ -6,7 +6,11 @@ A milestone-level story of how `agents-viz` got built. This is the public,
 sanitized retelling — for the raw record see git log.
 
 **Scope of this devlog**: 2 Claude Code sessions, 2026-04-20 → 2026-04-27,
-~6.8 calendar days, ~11,000 messages, ~$10,400 in API spend (Opus 4.7).
+~6.8 calendar days, ~950 real user prompts, ~4.9 B tokens,
+**~$3,985 of API-equivalent spend** at Opus 4.7 list pricing
+(of which 61% was cache_read on the growing conversation context).
+About 23% of those prompts directly touched agents-viz code — the rest
+were parallel work in the same long sessions.
 
 ---
 
