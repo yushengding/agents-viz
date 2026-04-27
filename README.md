@@ -223,6 +223,15 @@ cp my_room_bg.png extension/media/rooms/stickerfort_clean.png
 
 ---
 
+## Credits / 参考项目
+
+本项目实现过程中参考了两个开源项目，思路上多有借鉴（不是 fork）：
+
+- [**pixel-agents**](https://github.com/pablodelucca/pixel-agents) by pablodelucca (MIT) — VS Code 像素办公室可视化 Claude Code agent，"一个终端 = 一个像素角色"的核心隐喻、subagent 关联、hooks 模式即时检测 都来自这里。
+- [**Agent Flow**](https://github.com/craftmygame/agent-flow) (Apache-2.0) — Claude Code + Codex 实时 agent 执行图谱，HTTP hook server 直接接收事件 / JSONL tail / 多 session 并发的工程模式 借鉴自这里。
+
+Agents Viz 在两者之上做了不同的取舍：以"项目房间"为 first-class 单位（而非平铺办公室或图谱）、文件投票路由（不依赖 cwd）、长期静默走"睡眠仓"分区、lifetime cost / heatmap / costly-prompt 排行等成本观测面板。
+
 ## License
 
-Personal project, no license yet. Don't redistribute.
+Apache-2.0（见 [`extension/package.json`](extension/package.json) 中的 `license` 字段）。
