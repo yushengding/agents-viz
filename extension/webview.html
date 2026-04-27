@@ -2359,31 +2359,34 @@
         groups.get(key).push({ sid, meta });
       }
       // Sort rooms by:
-      //   1. active session count — DESC (active = event in last 24h, filters truly-cold sessions)
-      //   2. when both rooms have 0 active: latest lastTs — DESC (recently-touched first)
-      //   3. total session count — DESC
-      //   4. project name — ASC
+      //   1. lifetime room cost — DESC (primary: high-investment projects stay near the top
+      //      so a 5-minute one-off "routine" session can't bump real work out of view)
+      //   2. active session count — DESC (active = event in last 24h, breaks cost ties)
+      //   3. latest lastTs — DESC (recency tiebreaker)
+      //   4. total session count — DESC
+      //   5. project name — ASC
       // Lounge always last.
       const STALE_MS_SORT = 24 * 60 * 60 * 1000;
+      const COST_BUCKET = 1; // round to whole-dollar buckets so cents-level jitter doesn't reshuffle
       const roomStats = (key) => {
         const list = groups.get(key) || [];
-        let active = 0, latest = 0;
-        for (const { meta } of list) {
+        let active = 0, latest = 0, cost = 0;
+        for (const { sid, meta } of list) {
           const ts = meta.lastTs || 0;
           if (ts > latest) latest = ts;
           if (Date.now() - ts <= STALE_MS_SORT) active++;
+          const u = SESSION_USAGE[sid];
+          if (u && u.cost) cost += u.cost;
         }
-        return { active, latest, total: list.length };
+        return { active, latest, total: list.length, costBucket: Math.round(cost / COST_BUCKET) };
       };
       const roomKeys = Array.from(groups.keys())
         .filter(k => k !== LOUNGE)
         .sort((a, b) => {
           const sa = roomStats(a), sb = roomStats(b);
+          if (sb.costBucket !== sa.costBucket) return sb.costBucket - sa.costBucket;
           if (sb.active !== sa.active) return sb.active - sa.active;
-          // Both rooms have 0 active → prefer the more recently touched one.
-          if (sa.active === 0 && sb.active === 0 && sb.latest !== sa.latest) {
-            return sb.latest - sa.latest;
-          }
+          if (sb.latest !== sa.latest) return sb.latest - sa.latest;
           if (sb.total !== sa.total) return sb.total - sa.total;
           return a.toLowerCase().localeCompare(b.toLowerCase());
         });
