@@ -3680,7 +3680,7 @@
       const empty = () => Array.from({length: N}, () => []);
       const metrics = {
         ttfw: empty(), turn: empty(), toolDur: empty(), tokensPerTurn: empty(),
-        toolsPerTurn: empty(), costPerTurn: empty(), waitTime: empty(), subagentCount: empty(),
+        toolsPerTurn: empty(), costPerTurn: empty(), waitTime: empty(), cacheHitRate: empty(),
       };
       const filt = (filterText || '').trim().toLowerCase();
       // Idle gap that closes a turn even without a Stop event. JSONL replay
@@ -3688,13 +3688,13 @@
       // so without this a turn would span across actual conversational rounds
       // joined only by hook event silence.
       const IDLE_CLOSE_MS = 5 * 60 * 1000;
-      const flushTurn = (cur, turnTools, turnSubagents, turnToolDurSum) => {
+      const flushTurn = (cur, turnTools, turnToolDurSum, sessHitRate) => {
         const tb = Math.floor((cur.startTs - since) / granMs);
         if (tb < 0 || tb >= N) return;
         metrics.turn[tb].push((cur.lastTs - cur.startTs) / 1000);
         if (cur.firstToolTs) metrics.ttfw[tb].push((cur.firstToolTs - cur.startTs) / 1000);
         metrics.toolsPerTurn[tb].push(turnTools);
-        if (turnSubagents > 0) metrics.subagentCount[tb].push(turnSubagents);
+        if (sessHitRate !== null) metrics.cacheHitRate[tb].push(sessHitRate);
         const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
         if (wait >= 0) metrics.waitTime[tb].push(wait / 1000);
       };
@@ -3705,11 +3705,20 @@
           const proj = (typeof sessionProject === 'function' ? sessionProject(meta) : '').toLowerCase();
           if (!t.includes(filt) && !proj.includes(filt) && !sid.toLowerCase().includes(filt)) continue;
         }
+        // Cache hit rate is a session-level rate (we only have per-session totals
+        // in SESSION_USAGE, not per-prompt). Apply the same rate to every turn
+        // in this session so the box plot at any bucket reflects the hit-rate
+        // mix across active sessions in that bucket.
+        let sessHitRate = null;
+        const sessUsage = SESSION_USAGE[sid];
+        if (sessUsage) {
+          const total = (sessUsage.input || 0) + (sessUsage.cacheRead || 0) + (sessUsage.cacheCreate || 0);
+          if (total > 0) sessHitRate = ((sessUsage.cacheRead || 0) / total) * 100;
+        }
         // Walk events to extract per-turn aggregates + per-tool durations
         const idToPre = new Map();
         let cur = null;
         let turnTools = 0;
-        let turnSubagents = 0;
         let turnToolDurSum = 0;
         for (const e of evs) {
           if (e.ts < since || e.ts > now) continue;
@@ -3719,31 +3728,22 @@
           // though we never saw a Stop. Close it at lastTs so the duration
           // reflects active work, not "until-next-prompt".
           if (cur && (e.ts - cur.lastTs) > IDLE_CLOSE_MS) {
-            flushTurn(cur, turnTools, turnSubagents, turnToolDurSum);
-            cur = null; turnTools = 0; turnSubagents = 0; turnToolDurSum = 0;
+            flushTurn(cur, turnTools, turnToolDurSum, sessHitRate);
+            cur = null; turnTools = 0; turnToolDurSum = 0;
           }
           const n = e.hook_event_name;
           if (n === 'UserPromptSubmit') {
             if (cur && cur.lastTs > cur.startTs) {
-              const tb = Math.floor((cur.startTs - since) / granMs);
-              if (tb >= 0 && tb < N) {
-                metrics.turn[tb].push((cur.lastTs - cur.startTs) / 1000);
-                if (cur.firstToolTs) metrics.ttfw[tb].push((cur.firstToolTs - cur.startTs) / 1000);
-                metrics.toolsPerTurn[tb].push(turnTools);
-                if (turnSubagents > 0) metrics.subagentCount[tb].push(turnSubagents);
-                const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
-                if (wait >= 0) metrics.waitTime[tb].push(wait / 1000);
-              }
+              flushTurn(cur, turnTools, turnToolDurSum, sessHitRate);
             }
             cur = { startTs: e.ts, firstToolTs: 0, lastTs: e.ts };
-            turnTools = 0; turnSubagents = 0; turnToolDurSum = 0;
+            turnTools = 0; turnToolDurSum = 0;
           } else if (n === 'PreToolUse') {
             if (cur) {
               if (!cur.firstToolTs) cur.firstToolTs = e.ts;
               cur.lastTs = e.ts;
             }
             turnTools++;
-            if (e.tool_name === 'Agent' || e.tool_name === 'Task') turnSubagents++;
             if (e.tool_use_id) idToPre.set(e.tool_use_id, e.ts);
           } else if (n === 'PostToolUse') {
             if (cur) cur.lastTs = e.ts;
@@ -3758,29 +3758,13 @@
           } else if (n === 'Stop') {
             if (cur) {
               cur.lastTs = e.ts;
-              const tb = Math.floor((cur.startTs - since) / granMs);
-              if (tb >= 0 && tb < N) {
-                metrics.turn[tb].push((cur.lastTs - cur.startTs) / 1000);
-                if (cur.firstToolTs) metrics.ttfw[tb].push((cur.firstToolTs - cur.startTs) / 1000);
-                metrics.toolsPerTurn[tb].push(turnTools);
-                if (turnSubagents > 0) metrics.subagentCount[tb].push(turnSubagents);
-                const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
-                if (wait >= 0) metrics.waitTime[tb].push(wait / 1000);
-              }
-              cur = null; turnTools = 0; turnSubagents = 0; turnToolDurSum = 0;
+              flushTurn(cur, turnTools, turnToolDurSum, sessHitRate);
+              cur = null; turnTools = 0; turnToolDurSum = 0;
             }
           }
         }
         if (cur && cur.lastTs > cur.startTs) {
-          const tb = Math.floor((cur.startTs - since) / granMs);
-          if (tb >= 0 && tb < N) {
-            metrics.turn[tb].push((cur.lastTs - cur.startTs) / 1000);
-            if (cur.firstToolTs) metrics.ttfw[tb].push((cur.firstToolTs - cur.startTs) / 1000);
-            metrics.toolsPerTurn[tb].push(turnTools);
-            if (turnSubagents > 0) metrics.subagentCount[tb].push(turnSubagents);
-            const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
-            if (wait >= 0) metrics.waitTime[tb].push(wait / 1000);
-          }
+          flushTurn(cur, turnTools, turnToolDurSum, sessHitRate);
         }
       }
       // Cost/turn + Tokens/turn from PROMPT_COSTS — that's per-prompt actuals,
@@ -3829,7 +3813,7 @@
         { key: 'toolsPerTurn',  label: 'Tools / turn',        unit: '' },
         { key: 'costPerTurn',   label: 'Cost / turn ($)',     unit: '$' },
         { key: 'waitTime',      label: 'Wait time (s)',       unit: 's' },
-        { key: 'subagentCount', label: 'Subagents / turn',    unit: '' },
+        { key: 'cacheHitRate',  label: 'Cache hit (%)',       unit: '%' },
       ];
       const COLS = 4;
       const titles = [], grids = [], xAxes = [], yAxes = [], series = [];
