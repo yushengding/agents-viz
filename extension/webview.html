@@ -601,6 +601,53 @@
       cursor: help;
     }
     .session:hover .info .cost-badge { opacity: 1; }
+    .info .badge-row {
+      display: flex; gap: 4px; flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .info .badge-row .cost-badge { margin-top: 0; }
+    .info .speed-badge {
+      display: inline-flex; align-items: center;
+      gap: 4px;
+      padding: 1px 6px;
+      font-size: 10px;
+      line-height: 1.3;
+      font-variant-numeric: tabular-nums;
+      color: var(--vscode-foreground);
+      background: rgba(86, 156, 214, 0.10);
+      border: 1px solid rgba(86, 156, 214, 0.30);
+      border-radius: 3px;
+      opacity: 0.82;
+      cursor: help;
+      white-space: nowrap;
+    }
+    .session:hover .info .speed-badge { opacity: 1; }
+    /* Character roster id badge — small label in bottom-right of avatar so users
+     * can refer to "#19 dev_startup" in conversation without describing visuals. */
+    .session .avatar { position: relative; }
+    .session .avatar .char-idx {
+      position: absolute; right: 2px; bottom: 2px;
+      padding: 0 4px;
+      font-size: 9px;
+      font-variant-numeric: tabular-nums;
+      color: rgba(255,255,255,0.85);
+      background: rgba(0,0,0,0.55);
+      border-radius: 2px;
+      pointer-events: none;
+      opacity: 0.8;
+    }
+    .session:hover .avatar .char-idx { opacity: 1; }
+    /* Inline sparkline: 24 narrow bars, last 1h call density per 2.5min slot.
+     * Each bar height = (count / max in window) * 100%. Empty bars dimmed. */
+    .info .speed-badge .spark {
+      display: inline-flex; align-items: flex-end;
+      gap: 1px; height: 12px;
+    }
+    .info .speed-badge .spark span {
+      display: inline-block;
+      width: 2px; min-height: 1px;
+      background: #569CD6; border-radius: 1px;
+    }
     .info .cost-badge .coin {
       display: inline-block;
       width: 10px; height: 10px;
@@ -702,6 +749,46 @@
       gap: 4px;
     }
     #costboard-list.hidden { display: none; }
+    #speed-section {
+      flex-shrink: 0;
+      background: #232734;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    #speed-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 18px;
+      font-size: 11px; color: var(--vscode-foreground);
+      cursor: pointer; user-select: none;
+      transition: background 0.12s;
+    }
+    #speed-header:hover { background: rgba(255,255,255,0.04); }
+    #speed-section.open #speed-header .hm-chevron { transform: rotate(90deg); }
+    #speed-body {
+      padding: 4px 18px 8px 18px;
+    }
+    #speed-body.hidden { display: none; }
+    /* Compact 24h dual-axis trend chart. SVG inline, no chart lib. */
+    #speed-chart-wrap {
+      display: flex; flex-direction: column; gap: 2px;
+      font-size: 9px;
+      color: rgba(255,255,255,0.7);
+    }
+    #speed-chart-wrap svg { width: 100%; height: 44px; display: block; }
+    .sc-legend-row {
+      display: flex; gap: 12px; align-items: center;
+      font-variant-numeric: tabular-nums;
+      padding: 0 2px;
+    }
+    .sc-legend-row .sc-leg { display: inline-flex; align-items: center; gap: 4px; }
+    .sc-legend-row .sc-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    }
+    .sc-axis {
+      display: flex; justify-content: space-between;
+      font-size: 9px; opacity: 0.5;
+      padding: 0 2px;
+    }
+    .sc-axis span { white-space: nowrap; }
     .cb-row {
       display: grid;
       grid-template-columns: 50px 110px 1fr 60px;
@@ -1711,6 +1798,20 @@
         </div>
         <div id="costboard-list" class="hidden"></div>
       </div>
+      <div id="speed-section">
+        <div id="speed-header">
+          <span class="hm-chevron">▶</span>
+          <span class="hm-title">⚡ Speed</span>
+          <span class="hm-sub" id="speed-summary">no recent activity</span>
+        </div>
+        <div id="speed-body" class="hidden">
+          <div id="speed-chart-wrap">
+            <div id="speed-chart"></div>
+            <div class="sc-axis"><span>−24h</span><span>−12h</span><span>now</span></div>
+            <div class="sc-legend-row" id="speed-legend"></div>
+          </div>
+        </div>
+      </div>
       <div id="floor-plan" class="floor-plan">
         <div class="floor-plan-empty empty">Waiting for Claude Code sessions.</div>
       </div>
@@ -1807,6 +1908,7 @@
     const SESSION_USAGE = (typeof __SESSION_USAGE__ !== 'undefined') ? __SESSION_USAGE__ : {};
     const PROMPT_COSTS  = (typeof __PROMPT_COSTS__  !== 'undefined') ? __PROMPT_COSTS__  : [];
     const STRIP_LEN = 24;  /* 24 cells; bin width auto-scales with timeline span */
+    const ONE_HOUR_MS = 60 * 60 * 1000;
 
     // Format: $1,234.56 | $12.3 | $0.45 | $0.00
     function fmtCost(c) {
@@ -2263,6 +2365,74 @@
       return 'cold';                            // older: heavily dimmed
     }
 
+    /** Compute speed stats from a session's event log over the last `sinceMs`.
+     *  Returns: medianTurnMs, medianTtfwMs, callsPerMin, toolDurs[], turnCount, toolCount.
+     *  - Turn = UserPromptSubmit … (next UserPromptSubmit OR Stop). Turn duration =
+     *    lastEventTs - startTs (so a turn still in progress is timed up to its
+     *    last observed event).
+     *  - TTFW (Time To First Work) = firstPreToolUse.ts - UserPromptSubmit.ts.
+     *  - Tool durations = paired by tool_use_id (Pre.ts → Post.ts). Unpaired Pres
+     *    (e.g. session crashed mid-tool) are silently skipped.
+     */
+    function computeSpeedStats(events, sinceMs) {
+      const recent = [];
+      for (const e of events) if (e.ts >= sinceMs) recent.push(e);
+      const turns = [];
+      const toolDurs = [];
+      const idToPre = new Map();
+      let cur = null;
+      for (const e of recent) {
+        const n = e.hook_event_name;
+        if (n === 'UserPromptSubmit') {
+          if (cur) turns.push(cur);
+          cur = { startTs: e.ts, firstToolTs: 0, lastTs: e.ts };
+        } else if (n === 'PreToolUse') {
+          if (cur) {
+            if (!cur.firstToolTs) cur.firstToolTs = e.ts;
+            cur.lastTs = e.ts;
+          }
+          if (e.tool_use_id) idToPre.set(e.tool_use_id, { ts: e.ts, tool: e.tool_name });
+        } else if (n === 'PostToolUse') {
+          if (cur) cur.lastTs = e.ts;
+          if (e.tool_use_id && idToPre.has(e.tool_use_id)) {
+            const pre = idToPre.get(e.tool_use_id);
+            const dur = e.ts - pre.ts;
+            if (dur >= 0 && dur < 600_000) toolDurs.push({ tool: pre.tool, ms: dur });
+            idToPre.delete(e.tool_use_id);
+          }
+        } else if (n === 'Stop') {
+          if (cur) { cur.lastTs = e.ts; turns.push(cur); cur = null; }
+        }
+      }
+      if (cur) turns.push(cur);
+      const median = arr => {
+        if (!arr.length) return 0;
+        const s = arr.slice().sort((a, b) => a - b);
+        return s[Math.floor(s.length / 2)];
+      };
+      const turnDurs = turns.filter(t => t.lastTs > t.startTs).map(t => t.lastTs - t.startTs);
+      const ttfws = turns.filter(t => t.firstToolTs).map(t => t.firstToolTs - t.startTs);
+      const toolCount = recent.reduce((n, e) => n + (e.hook_event_name === 'PreToolUse' ? 1 : 0), 0);
+      const windowMin = (Date.now() - sinceMs) / 60_000;
+      return {
+        medianTurnMs: median(turnDurs),
+        medianTtfwMs: median(ttfws),
+        callsPerMin: windowMin > 0 ? toolCount / windowMin : 0,
+        toolDurs,
+        turnCount: turns.length,
+        toolCount,
+      };
+    }
+
+    /** Format a duration in ms as a compact human string. */
+    function fmtDur(ms) {
+      if (!ms || ms < 0) return '—';
+      if (ms < 1000) return Math.round(ms) + 'ms';
+      if (ms < 60_000) return (ms / 1000).toFixed(1) + 's';
+      if (ms < 3600_000) return Math.round(ms / 60_000) + 'm';
+      return Math.round(ms / 3_600_000) + 'h';
+    }
+
     /**
      * Map tool (or 'thinking') to a CSS class that changes:
      *   - sprite row (down=0 / up=1 / right=2)
@@ -2615,8 +2785,41 @@
             '\\nmsgs: ' + usage.msgCount +
             '\\nmodels: ' + (usage.models || []).join(', ');
         }
+        // Speed badge — last 1h reply latency + 24-cell sparkline (2.5min/cell)
+        // showing call density. Sparkline beats "0.2/m" text: shows trend (steady
+        // vs bursty vs idle) at a glance.
+        const sessionEvents = bySession.get(sid) || [];
+        const speedStats = computeSpeedStats(sessionEvents, now - ONE_HOUR_MS);
+        let speedBadge = '';
+        let speedTitle = '';
+        if (speedStats.toolCount > 0 || speedStats.turnCount > 0) {
+          const turnLbl = speedStats.medianTurnMs > 0 ? fmtDur(speedStats.medianTurnMs) : '—';
+          // Build 24-bin sparkline (2.5min/bin = 1h window)
+          const SPARK_BINS = 24;
+          const SPARK_BIN_MS = ONE_HOUR_MS / SPARK_BINS;
+          const sparkCounts = new Array(SPARK_BINS).fill(0);
+          for (const e of sessionEvents) {
+            if (e.hook_event_name !== 'PreToolUse') continue;
+            const ageMs = now - e.ts;
+            if (ageMs < 0 || ageMs >= ONE_HOUR_MS) continue;
+            const slot = SPARK_BINS - 1 - Math.floor(ageMs / SPARK_BIN_MS);
+            if (slot >= 0 && slot < SPARK_BINS) sparkCounts[slot]++;
+          }
+          const maxC = Math.max(1, ...sparkCounts);
+          const sparkHtml = sparkCounts.map(c => {
+            const h = c > 0 ? Math.max(2, Math.round((c / maxC) * 100)) : 0;
+            return '<span style="height:' + h + '%' + (c === 0 ? ';opacity:.15' : '') + '"></span>';
+          }).join('');
+          speedBadge = '⚡ ' + turnLbl + ' <span class="spark">' + sparkHtml + '</span>';
+          speedTitle = 'last 1h speed:' +
+            '\\n  median turn: ' + fmtDur(speedStats.medianTurnMs) + ' (' + speedStats.turnCount + ' turns)' +
+            '\\n  median TTFW (time-to-first-work): ' + fmtDur(speedStats.medianTtfwMs) +
+            '\\n  tool calls/min: ' + speedStats.callsPerMin.toFixed(1) +
+            '\\n  total tool calls: ' + speedStats.toolCount +
+            '\\n  sparkline = 2.5min/bin, height = call count';
+        }
         // Signature captures fields that require DOM mutation. If unchanged, skip entirely.
-        const sig = [sessionCls, avatarCls, effectiveAction, title, subTitleText, statusWithAgo, stripHtml, costBadge].join('|');
+        const sig = [sessionCls, avatarCls, effectiveAction, title, subTitleText, statusWithAgo, stripHtml, costBadge, speedBadge].join('|');
 
         let entry = sessionCards.get(sid);
         if (!entry) {
@@ -2644,13 +2847,17 @@
                 '<div class="desk-item"></div>' +
                 '<div class="char-badge"></div>' +
               '</div>' +
+              '<div class="char-idx" title="character roster id">#' + (meta.charIdx || 0) + '</div>' +
             '</div>' +
             '<div class="info">' +
               '<div class="title"></div>' +
               '<div class="subtitle"></div>' +
               '<div class="status-line"><span class="dot"></span><span class="status-txt"></span></div>' +
               '<div class="strip"></div>' +
-              '<div class="cost-badge" title=""></div>' +
+              '<div class="badge-row">' +
+                '<div class="cost-badge" title=""></div>' +
+                '<div class="speed-badge" title=""></div>' +
+              '</div>' +
             '</div>' +
             '<div class="gear-btn" title="Agent options">⚙</div>' +
             '<div class="gear-menu">' +
@@ -2712,6 +2919,15 @@
             cb.style.display = '';
           } else {
             cb.style.display = 'none';
+          }
+          const sb = div.querySelector('.speed-badge');
+          if (speedBadge) {
+            // speedBadge contains a <span class="spark"> sub-element, so use innerHTML
+            sb.innerHTML = speedBadge;
+            sb.setAttribute('title', speedTitle);
+            sb.style.display = '';
+          } else {
+            sb.style.display = 'none';
           }
           entry.lastSig = sig;
         }
@@ -3336,7 +3552,12 @@
 
     // Auto-tick sidebar every 30s so relative times ("2m ago") stay fresh
     // Re-render every 5s so stale-liveness is reflected promptly (before: 30s = laggy)
-    setInterval(() => { renderSidebar(); }, 5_000);
+    setInterval(() => {
+      renderSidebar();
+      if (typeof updateSpeed === 'function') {
+        try { updateSpeed(); } catch {}
+      }
+    }, 5_000);
 
     // Hide >3d toggle
     const hideOldBox = document.getElementById('hide-old');
@@ -3396,6 +3617,144 @@
         state.costboardOpen = willOpen;
         vscode.setState(state);
         if (willOpen) updateCostboard();
+      });
+    }
+
+    // --- Speed widget ---
+    /** Aggregate speed stats across all sessions, render the compact 1h summary
+     *  + (when expanded) a 24h dual-axis trend chart: calls/hour (left axis,
+     *  blue line) and median turn duration (right axis, orange line). */
+    function updateSpeed() {
+      const summary = document.getElementById('speed-summary');
+      const chart = document.getElementById('speed-chart');
+      if (!summary || !chart) return;
+      const now = Date.now();
+      const ONE_DAY_MS = 24 * ONE_HOUR_MS;
+
+      // 1-hour aggregate (for summary line) — same as before
+      const since1h = now - ONE_HOUR_MS;
+      const allTurns1h = [];
+      const allTtfws1h = [];
+      let calls1h = 0;
+      for (const evs of bySession.values()) {
+        const s = computeSpeedStats(evs, since1h);
+        if (s.medianTurnMs > 0) allTurns1h.push(s.medianTurnMs);
+        if (s.medianTtfwMs > 0) allTtfws1h.push(s.medianTtfwMs);
+        calls1h += s.toolCount;
+      }
+      const med = a => { if (!a.length) return 0; const s = a.slice().sort((x,y)=>x-y); return s[Math.floor(s.length/2)]; };
+      const turn1h = med(allTurns1h);
+      const ttfw1h = med(allTtfws1h);
+      summary.textContent = (calls1h === 0 && allTurns1h.length === 0)
+        ? 'no recent activity'
+        : 'turn ' + fmtDur(turn1h) + ' · ' + (calls1h / 60).toFixed(1) +
+          ' calls/min · TTFW ' + fmtDur(ttfw1h);
+
+      // 24-hour buckets (for trend chart). Each bucket = 1h.
+      const buckets = Array.from({length: 24}, () => ({ calls: 0, turnDurs: [] }));
+      for (const evs of bySession.values()) {
+        // Walk events once, bucket by hour-ago
+        const idToPre = new Map();
+        let cur = null;
+        for (const e of evs) {
+          const ageMs = now - e.ts;
+          if (ageMs < 0 || ageMs >= ONE_DAY_MS) continue;
+          const bucketIdx = 23 - Math.floor(ageMs / ONE_HOUR_MS);
+          if (bucketIdx < 0 || bucketIdx >= 24) continue;
+          const n = e.hook_event_name;
+          if (n === 'PreToolUse') {
+            buckets[bucketIdx].calls++;
+            if (e.tool_use_id) idToPre.set(e.tool_use_id, e.ts);
+            if (cur && !cur.firstToolTs) cur.firstToolTs = e.ts;
+            if (cur) cur.lastTs = e.ts;
+          } else if (n === 'UserPromptSubmit') {
+            if (cur && cur.lastTs > cur.startTs) {
+              const tb = 23 - Math.floor((now - cur.startTs) / ONE_HOUR_MS);
+              if (tb >= 0 && tb < 24) buckets[tb].turnDurs.push(cur.lastTs - cur.startTs);
+            }
+            cur = { startTs: e.ts, firstToolTs: 0, lastTs: e.ts };
+          } else if (n === 'Stop') {
+            if (cur) {
+              cur.lastTs = e.ts;
+              const tb = 23 - Math.floor((now - cur.startTs) / ONE_HOUR_MS);
+              if (tb >= 0 && tb < 24) buckets[tb].turnDurs.push(cur.lastTs - cur.startTs);
+              cur = null;
+            }
+          } else if (n === 'PostToolUse') {
+            if (cur) cur.lastTs = e.ts;
+          }
+        }
+        if (cur && cur.lastTs > cur.startTs) {
+          const tb = 23 - Math.floor((now - cur.startTs) / ONE_HOUR_MS);
+          if (tb >= 0 && tb < 24) buckets[tb].turnDurs.push(cur.lastTs - cur.startTs);
+        }
+      }
+
+      // Compute per-bucket aggregates
+      const callSeries = buckets.map(b => b.calls);
+      const turnSeries = buckets.map(b => b.turnDurs.length ? med(b.turnDurs) : null);
+      const maxCalls = Math.max(1, ...callSeries);
+      const maxTurn = Math.max(1, ...turnSeries.filter(x => x !== null));
+      const totalCalls24h = callSeries.reduce((a,b)=>a+b,0);
+      const turnsAll = buckets.flatMap(b => b.turnDurs);
+      const med24h = med(turnsAll);
+
+      // SVG path generators. Width: viewBox 240x60, leaving 4px gutter both sides.
+      const W = 240, H = 60, GUT = 4;
+      const xOf = i => GUT + (i / 23) * (W - 2 * GUT);
+      const yCalls = c => H - GUT - (c / maxCalls) * (H - 2 * GUT);
+      const yTurn = t => H - GUT - (t / maxTurn) * (H - 2 * GUT);
+      const callPath = callSeries.map((c, i) => (i === 0 ? 'M' : 'L') + xOf(i).toFixed(1) + ' ' + yCalls(c).toFixed(1)).join(' ');
+      // Turn line skips null buckets (gaps when no turn data)
+      let turnPath = '';
+      let started = false;
+      turnSeries.forEach((t, i) => {
+        if (t === null) { started = false; return; }
+        turnPath += (started ? 'L' : 'M') + xOf(i).toFixed(1) + ' ' + yTurn(t).toFixed(1) + ' ';
+        started = true;
+      });
+      const callDots = callSeries.map((c, i) => c > 0
+        ? '<circle cx="' + xOf(i).toFixed(1) + '" cy="' + yCalls(c).toFixed(1) + '" r="1.5" fill="#569CD6"/>'
+        : '').join('');
+      const turnDots = turnSeries.map((t, i) => t !== null
+        ? '<circle cx="' + xOf(i).toFixed(1) + '" cy="' + yTurn(t).toFixed(1) + '" r="1.5" fill="#F48771"/>'
+        : '').join('');
+
+      chart.innerHTML =
+        '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+          '<line x1="0" y1="' + (H/2) + '" x2="' + W + '" y2="' + (H/2) + '" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>' +
+          '<path d="' + callPath + '" fill="none" stroke="#569CD6" stroke-width="1.4" stroke-linejoin="round"/>' +
+          (turnPath ? '<path d="' + turnPath + '" fill="none" stroke="#F48771" stroke-width="1.4" stroke-linejoin="round"/>' : '') +
+          callDots + turnDots +
+        '</svg>';
+      const legend = document.getElementById('speed-legend');
+      if (legend) {
+        legend.innerHTML =
+          '<span class="sc-leg"><span class="sc-dot" style="background:#569CD6"></span>calls/h · peak ' + maxCalls + '</span>' +
+          '<span class="sc-leg"><span class="sc-dot" style="background:#F48771"></span>turn p50 ' + fmtDur(med24h) + '</span>' +
+          '<span style="opacity:.5;margin-left:auto">' + totalCalls24h + ' total calls / 24h</span>';
+      }
+    }
+
+    const spSection = document.getElementById('speed-section');
+    const spHeader  = document.getElementById('speed-header');
+    const spBody    = document.getElementById('speed-body');
+    if (spSection && spHeader && spBody) {
+      if (state.speedOpen) {
+        spBody.classList.remove('hidden');
+        spSection.classList.add('open');
+        updateSpeed();
+      } else {
+        // Always render summary line (cheap, no DOM bars)
+        updateSpeed();
+      }
+      spHeader.addEventListener('click', () => {
+        const willOpen = spBody.classList.contains('hidden');
+        spBody.classList.toggle('hidden');
+        spSection.classList.toggle('open', willOpen);
+        state.speedOpen = willOpen;
+        vscode.setState(state);
+        if (willOpen) updateSpeed();
       });
     }
 
