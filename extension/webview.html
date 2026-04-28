@@ -3924,10 +3924,23 @@
       if (granLabel) granLabel.textContent = gran;
       const data = buildSpeedSeries(rangeToMs(range), granToMs(gran), speedDash.filter);
       const opt = buildEchartsOption(data);
+      // Hash the data shape so we skip setOption when nothing changed —
+      // otherwise the 5s tick redraws the chart, kills tooltips mid-hover, and
+      // resets the dataZoom slider position the user just dragged.
+      const shapeKey = JSON.stringify({
+        r: range, g: gran, f: speedDash.filter,
+        d: data.metrics // raw sample arrays — changes mean new data arrived
+      });
+      if (speedDash._lastShape === shapeKey && speedDash._chart) return;
+      speedDash._lastShape = shapeKey;
       if (!speedDash._chart) {
         speedDash._chart = echarts.init(dash, null, { renderer: 'canvas' });
       }
-      speedDash._chart.setOption(opt, { notMerge: true });
+      // notMerge: false (default) → ECharts diffs vs prev option, so dataZoom
+      // window the user dragged + tooltip state are preserved across ticks.
+      // Only the series.data deltas re-render. Switching range/granularity
+      // changes grid count etc., still fine under merge semantics here.
+      speedDash._chart.setOption(opt);
     }
     const spSection = document.getElementById('speed-section');
     const spHeader  = document.getElementById('speed-header');
