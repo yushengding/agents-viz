@@ -3942,17 +3942,26 @@
       const gran = granForRange(range, speedDash.granOverride);
       const granLabel = document.getElementById('speed-gran-value');
       if (granLabel) granLabel.textContent = gran;
-      const data = buildSpeedSeries(rangeToMs(range), granToMs(gran), speedDash.filter);
-      const opt = buildEchartsOption(data);
-      // Hash the data shape so we skip setOption when nothing changed —
-      // otherwise the 5s tick redraws the chart, kills tooltips mid-hover, and
-      // resets the dataZoom slider position the user just dragged.
-      const shapeKey = JSON.stringify({
-        r: range, g: gran, f: speedDash.filter,
-        d: data.metrics // raw sample arrays — changes mean new data arrived
-      });
+      // Cheap "data fingerprint" — total events + last event ts across all sessions.
+      // Stable whenever no new event has been ingested. The earlier approach
+      // (hashing the full metrics arrays) was unstable: `since = now - rangeMs`
+      // shifts every tick, bucket-boundary events cross sides, the hash differs,
+      // and the dashboard re-renders every 5s even with zero new data.
+      let totalEvents = 0, lastEventTs = 0;
+      for (const evs of bySession.values()) {
+        totalEvents += evs.length;
+        if (evs.length > 0) {
+          const last = evs[evs.length - 1].ts;
+          if (last > lastEventTs) lastEventTs = last;
+        }
+      }
+      const shapeKey = range + '|' + gran + '|' + speedDash.filter + '|' +
+                       totalEvents + '|' + lastEventTs + '|' +
+                       (PROMPT_COSTS ? PROMPT_COSTS.length : 0);
       if (speedDash._lastShape === shapeKey && speedDash._chart) return;
       speedDash._lastShape = shapeKey;
+      const data = buildSpeedSeries(rangeToMs(range), granToMs(gran), speedDash.filter);
+      const opt = buildEchartsOption(data);
       if (!speedDash._chart) {
         speedDash._chart = echarts.init(dash, null, { renderer: 'canvas' });
       }
