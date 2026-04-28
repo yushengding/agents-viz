@@ -3806,9 +3806,11 @@
     }
 
     /** Reduce a per-bucket sample array to ECharts boxplot format
-     *  [min, Q1, median, Q3, max]. Returns null if <3 samples. */
+     *  [min, Q1, median, Q3, max]. With 1 sample all five collapse to the same
+     *  value (renders as a thin tick); 2 samples interpolate. Earlier threshold
+     *  of 3 left most buckets empty when 80 turns spread across 24 hourly bins. */
     function boxStats(arr) {
-      if (!arr || arr.length < 3) return null;
+      if (!arr || arr.length === 0) return null;
       const s = arr.slice().sort((a, b) => a - b);
       const at = p => s[Math.min(s.length - 1, Math.max(0, Math.floor(p * (s.length - 1))))];
       return [s[0], at(0.25), at(0.5), at(0.75), s[s.length - 1]];
