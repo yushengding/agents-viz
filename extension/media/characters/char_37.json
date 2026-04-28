@@ -1,0 +1,82 @@
+{
+  "version": "1.0",
+  "name": "dev_femme_founder_v24",
+  "sheet": {
+    "width": 672,
+    "height": 576
+  },
+  "cell": {
+    "width": 96,
+    "height": 192
+  },
+  "grid": {
+    "cols": 7,
+    "rows": 3
+  },
+  "displayCell": {
+    "width": 48,
+    "height": 96
+  },
+  "frames": {
+    "walk1": {
+      "col": 0,
+      "row": 0
+    },
+    "idle": {
+      "col": 1,
+      "row": 0
+    },
+    "walk3": {
+      "col": 2,
+      "row": 0
+    },
+    "type1": {
+      "col": 3,
+      "row": 0
+    },
+    "type2": {
+      "col": 4,
+      "row": 0
+    },
+    "read1": {
+      "col": 5,
+      "row": 0
+    },
+    "read2": {
+      "col": 6,
+      "row": 0
+    },
+    "sitOnSofa": {
+      "col": 0,
+      "row": 1
+    },
+    "sleep": {
+      "col": 1,
+      "row": 1
+    },
+    "wave": {
+      "col": 2,
+      "row": 1
+    },
+    "celebrate": {
+      "col": 3,
+      "row": 1
+    },
+    "stretch": {
+      "col": 4,
+      "row": 1
+    },
+    "drink": {
+      "col": 5,
+      "row": 1
+    },
+    "read": {
+      "col": 6,
+      "row": 1
+    },
+    "rightIdle": {
+      "col": 1,
+      "row": 2
+    }
+  }
+}
