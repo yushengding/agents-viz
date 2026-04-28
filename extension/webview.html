@@ -3705,12 +3705,12 @@
             if (cur && cur.lastTs > cur.startTs) {
               const tb = Math.floor((cur.startTs - since) / granMs);
               if (tb >= 0 && tb < N) {
-                metrics.turn[tb].push(cur.lastTs - cur.startTs);
-                if (cur.firstToolTs) metrics.ttfw[tb].push(cur.firstToolTs - cur.startTs);
+                metrics.turn[tb].push((cur.lastTs - cur.startTs) / 1000);
+                if (cur.firstToolTs) metrics.ttfw[tb].push((cur.firstToolTs - cur.startTs) / 1000);
                 metrics.toolsPerTurn[tb].push(turnTools);
                 if (turnSubagents > 0) metrics.subagentCount[tb].push(turnSubagents);
                 const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
-                if (wait >= 0) metrics.waitTime[tb].push(wait);
+                if (wait >= 0) metrics.waitTime[tb].push(wait / 1000);
               }
             }
             cur = { startTs: e.ts, firstToolTs: 0, lastTs: e.ts };
@@ -3728,7 +3728,7 @@
             if (e.tool_use_id && idToPre.has(e.tool_use_id)) {
               const dur = e.ts - idToPre.get(e.tool_use_id);
               if (dur >= 0 && dur < 600_000) {
-                metrics.toolDur[bucketIdx].push(dur);
+                metrics.toolDur[bucketIdx].push(dur / 1000);
                 turnToolDurSum += dur;
               }
               idToPre.delete(e.tool_use_id);
@@ -3738,12 +3738,12 @@
               cur.lastTs = e.ts;
               const tb = Math.floor((cur.startTs - since) / granMs);
               if (tb >= 0 && tb < N) {
-                metrics.turn[tb].push(cur.lastTs - cur.startTs);
-                if (cur.firstToolTs) metrics.ttfw[tb].push(cur.firstToolTs - cur.startTs);
+                metrics.turn[tb].push((cur.lastTs - cur.startTs) / 1000);
+                if (cur.firstToolTs) metrics.ttfw[tb].push((cur.firstToolTs - cur.startTs) / 1000);
                 metrics.toolsPerTurn[tb].push(turnTools);
                 if (turnSubagents > 0) metrics.subagentCount[tb].push(turnSubagents);
                 const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
-                if (wait >= 0) metrics.waitTime[tb].push(wait);
+                if (wait >= 0) metrics.waitTime[tb].push(wait / 1000);
               }
               cur = null; turnTools = 0; turnSubagents = 0; turnToolDurSum = 0;
             }
@@ -3752,12 +3752,12 @@
         if (cur && cur.lastTs > cur.startTs) {
           const tb = Math.floor((cur.startTs - since) / granMs);
           if (tb >= 0 && tb < N) {
-            metrics.turn[tb].push(cur.lastTs - cur.startTs);
-            if (cur.firstToolTs) metrics.ttfw[tb].push(cur.firstToolTs - cur.startTs);
+            metrics.turn[tb].push((cur.lastTs - cur.startTs) / 1000);
+            if (cur.firstToolTs) metrics.ttfw[tb].push((cur.firstToolTs - cur.startTs) / 1000);
             metrics.toolsPerTurn[tb].push(turnTools);
             if (turnSubagents > 0) metrics.subagentCount[tb].push(turnSubagents);
             const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
-            if (wait >= 0) metrics.waitTime[tb].push(wait);
+            if (wait >= 0) metrics.waitTime[tb].push(wait / 1000);
           }
         }
       }
@@ -3802,13 +3802,13 @@
       const { buckets, metrics } = seriesData;
       const xAxisData = buckets.map(ts => new Date(ts).toISOString());
       const PANELS = [
-        { key: 'ttfw',          label: 'TTFW (ms)',           unit: 'ms' },
-        { key: 'turn',          label: 'Turn latency (ms)',   unit: 'ms' },
-        { key: 'toolDur',       label: 'Tool duration (ms)',  unit: 'ms' },
+        { key: 'ttfw',          label: 'TTFW (s)',            unit: 's' },
+        { key: 'turn',          label: 'Turn latency (s)',    unit: 's' },
+        { key: 'toolDur',       label: 'Tool duration (s)',   unit: 's' },
         { key: 'tokensPerTurn', label: 'Tokens / turn',       unit: 'tok' },
         { key: 'toolsPerTurn',  label: 'Tools / turn',        unit: '' },
         { key: 'costPerTurn',   label: 'Cost / turn ($)',     unit: '$' },
-        { key: 'waitTime',      label: 'Wait time (ms)',      unit: 'ms' },
+        { key: 'waitTime',      label: 'Wait time (s)',       unit: 's' },
         { key: 'subagentCount', label: 'Subagents / turn',    unit: '' },
       ];
       const COLS = 4;
