@@ -3706,11 +3706,18 @@
       const flushTurn = (cur, turnTools, turnToolDurSum, sessHitRate) => {
         const tb = Math.floor((cur.startTs - since) / granMs);
         if (tb < 0 || tb >= N) return;
-        metrics.turn[tb].push((cur.lastTs - cur.startTs) / 1000);
-        if (cur.firstToolTs) metrics.ttfw[tb].push((cur.firstToolTs - cur.startTs) / 1000);
+        // Defensive: out-of-order events should be sorted upstream, but if
+        // anything still leaks through with lastTs < startTs we'd push a
+        // negative duration into the box plot. Skip outright.
+        const turnMs = cur.lastTs - cur.startTs;
+        if (turnMs < 0) return;
+        metrics.turn[tb].push(turnMs / 1000);
+        if (cur.firstToolTs && cur.firstToolTs >= cur.startTs) {
+          metrics.ttfw[tb].push((cur.firstToolTs - cur.startTs) / 1000);
+        }
         metrics.toolsPerTurn[tb].push(turnTools);
         if (sessHitRate !== null) metrics.cacheHitRate[tb].push(sessHitRate);
-        const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
+        const wait = turnMs - turnToolDurSum;
         if (wait >= 0) metrics.waitTime[tb].push(wait / 1000);
       };
       for (const [sid, evs] of bySession.entries()) {
@@ -3730,12 +3737,17 @@
           const total = (sessUsage.input || 0) + (sessUsage.cacheRead || 0) + (sessUsage.cacheCreate || 0);
           if (total > 0) sessHitRate = ((sessUsage.cacheRead || 0) / total) * 100;
         }
+        // bySession is appended in ARRIVAL order (live + replay interleave),
+        // so events can be temporally out of order. Sort a shallow copy by ts
+        // before walking — otherwise a stale replay event arriving after a live
+        // event makes cur.lastTs < cur.startTs (negative turn latency).
+        const sortedEvs = evs.slice().sort((a, b) => (a.ts || 0) - (b.ts || 0));
         // Walk events to extract per-turn aggregates + per-tool durations
         const idToPre = new Map();
         let cur = null;
         let turnTools = 0;
         let turnToolDurSum = 0;
-        for (const e of evs) {
+        for (const e of sortedEvs) {
           if (e.ts < since || e.ts > now) continue;
           const bucketIdx = Math.floor((e.ts - since) / granMs);
           if (bucketIdx < 0 || bucketIdx >= N) continue;
