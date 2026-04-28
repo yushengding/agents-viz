@@ -20,6 +20,7 @@ export interface BuildOpts {
         sessionId: string; promptText: string; promptTs: number;
         cost: number; tokens: number; cwd?: string;
     }>;
+    echartsUri?: string;       // pre-resolved webview URI to bundled echarts.min.js
 }
 
 export function buildWebviewHtml(opts: BuildOpts): string {
@@ -42,7 +43,8 @@ export function buildWebviewHtml(opts: BuildOpts): string {
         .replace(/__SOFA_FRONT__/g, opts.sofaFront || '')
         .replace(/__SOFA_SIDE__/g, opts.sofaSide || '')
         .replace(/__SESSION_USAGE__/g, JSON.stringify(opts.sessionUsage || {}))
-        .replace(/__PROMPT_COSTS__/g, JSON.stringify(opts.promptCosts || []));
+        .replace(/__PROMPT_COSTS__/g, JSON.stringify(opts.promptCosts || []))
+        .replace(/__ECHARTS_URI__/g, opts.echartsUri || '');
 }
 
 /** Return the absolute path of the webview HTML template so it can be watched. */

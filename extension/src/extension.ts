@@ -781,6 +781,12 @@ export async function activate(context: vscode.ExtensionContext) {
         hotReloadRebuild = () => {
             if (!panel) return;
             const rooms = scanRoomImages();
+            // Resolve the bundled echarts.min.js into a webview-scheme URI so the
+            // dashboard can <script src=...> it without the default-CSP rejecting
+            // a file:/// path.
+            const echartsUri = panel.webview.asWebviewUri(
+                vscode.Uri.joinPath(context.extensionUri, 'media', 'vendor', 'echarts.min.js')
+            ).toString();
             // First-load fast path: ship HTML with EMPTY usage/promptCosts so the
             // panel renders immediately. Heavy scans run async below and post results.
             panel.webview.html = buildWebviewHtml({
@@ -789,6 +795,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 sofaFront, sofaSide,
                 sessionUsage: {},
                 promptCosts: [],
+                echartsUri,
             });
             // Background scan with on-disk cache. First load: full read + populate cache.
             // Subsequent loads: only re-read changed files. Then post results to webview.

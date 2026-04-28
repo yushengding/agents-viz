@@ -43,6 +43,9 @@ for (let i = 0; i < 6; i++) {
 }
 html = html.replace(/__SPRITE_URIS__/g, JSON.stringify(sprites));
 html = html.replace(/__SPRITE_MANIFESTS__/g, JSON.stringify(manifests));
+// Standalone preview: load ECharts from CDN (in VSCode extension context the URI
+// is replaced via panel.webview.asWebviewUri pointing at extension/media/vendor/).
+html = html.replace(/__ECHARTS_URI__/g, 'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js');
 html = html.replace(/__SESSION_USAGE__/g, JSON.stringify({
     bb0002: { input: 12000, output: 4000, cacheCreate: 8000, cacheRead: 100000, cost: 1.42, models: ['claude-opus-4-7'], msgCount: 38 },
     bbbb2222: { input: 8000, output: 3500, cacheCreate: 4000, cacheRead: 60000, cost: 0.78, models: ['claude-opus-4-7'], msgCount: 22 },

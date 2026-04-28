@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; script-src 'unsafe-inline';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; script-src 'unsafe-inline' https: vscode-webview-resource:;">
   <title>Agents Viz</title>
   <style>
     :root {
@@ -764,31 +764,48 @@
     #speed-header:hover { background: rgba(255,255,255,0.04); }
     #speed-section.open #speed-header .hm-chevron { transform: rotate(90deg); }
     #speed-body {
-      padding: 4px 18px 8px 18px;
+      padding: 6px 18px 10px 18px;
     }
     #speed-body.hidden { display: none; }
-    /* Compact 24h dual-axis trend chart. SVG inline, no chart lib. */
-    #speed-chart-wrap {
-      display: flex; flex-direction: column; gap: 2px;
-      font-size: 9px;
-      color: rgba(255,255,255,0.7);
+    #speed-controls {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 6px;
     }
-    #speed-chart-wrap svg { width: 100%; height: 44px; display: block; }
-    .sc-legend-row {
-      display: flex; gap: 12px; align-items: center;
-      font-variant-numeric: tabular-nums;
-      padding: 0 2px;
+    #speed-filter {
+      flex: 1; min-width: 0;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 3px;
+      padding: 3px 8px;
+      font-size: 11px;
+      color: var(--vscode-foreground);
+      outline: none;
     }
-    .sc-legend-row .sc-leg { display: inline-flex; align-items: center; gap: 4px; }
-    .sc-legend-row .sc-dot {
-      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    #speed-filter:focus { border-color: rgba(86,156,214,0.6); }
+    .speed-range-buttons { display: flex; gap: 2px; }
+    .speed-range-buttons button {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.10);
+      color: var(--vscode-foreground);
+      font-size: 10px;
+      padding: 3px 8px;
+      cursor: pointer;
+      border-radius: 2px;
     }
-    .sc-axis {
-      display: flex; justify-content: space-between;
-      font-size: 9px; opacity: 0.5;
-      padding: 0 2px;
+    .speed-range-buttons button:hover { background: rgba(255,255,255,0.10); }
+    .speed-range-buttons button.active {
+      background: rgba(86,156,214,0.18);
+      border-color: rgba(86,156,214,0.55);
+      color: #9CDCFE;
     }
-    .sc-axis span { white-space: nowrap; }
+    .speed-gran { font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+    .speed-gran-label { opacity: 0.5; margin-right: 3px; }
+    /* Dashboard host for ECharts. The 8-panel grid is configured inside one
+     * ECharts instance using its grid+xAxis+yAxis arrays — much less DOM than
+     * 8 separate canvases and shares one dataZoom slider across all panels. */
+    #speed-dashboard {
+      width: 100%; height: 360px;
+    }
     .cb-row {
       display: grid;
       grid-template-columns: 50px 110px 1fr 60px;
@@ -1741,6 +1758,10 @@
       font-style: italic;
     }
   </style>
+  <!-- ECharts loaded from extension/media/vendor/. Empty src in standalone preview
+       (export_webview_preview falls back to a CDN injection); webview.ts swaps
+       __ECHARTS_URI__ with the panel.webview.asWebviewUri() result. -->
+  <script src="__ECHARTS_URI__"></script>
 </head>
 <body>
   <div id="char-popover"></div>
@@ -1805,11 +1826,19 @@
           <span class="hm-sub" id="speed-summary">no recent activity</span>
         </div>
         <div id="speed-body" class="hidden">
-          <div id="speed-chart-wrap">
-            <div id="speed-chart"></div>
-            <div class="sc-axis"><span>−24h</span><span>−12h</span><span>now</span></div>
-            <div class="sc-legend-row" id="speed-legend"></div>
+          <div id="speed-controls">
+            <input id="speed-filter" type="text" placeholder="🔍 filter by session title (empty = all)…"/>
+            <div class="speed-range-buttons">
+              <button data-range="1h">1h</button>
+              <button data-range="24h" class="active">24h</button>
+              <button data-range="7d">7d</button>
+            </div>
+            <div class="speed-gran">
+              <span class="speed-gran-label">bin:</span>
+              <span id="speed-gran-value">1h</span>
+            </div>
           </div>
+          <div id="speed-dashboard"></div>
         </div>
       </div>
       <div id="floor-plan" class="floor-plan">
@@ -3620,122 +3649,279 @@
       });
     }
 
-    // --- Speed widget ---
-    /** Aggregate speed stats across all sessions, render the compact 1h summary
-     *  + (when expanded) a 24h dual-axis trend chart: calls/hour (left axis,
-     *  blue line) and median turn duration (right axis, orange line). */
-    function updateSpeed() {
-      const summary = document.getElementById('speed-summary');
-      const chart = document.getElementById('speed-chart');
-      if (!summary || !chart) return;
+    // --- Speed dashboard (ECharts-powered, 8-metric small multiples) ---
+    /** State for the dashboard: range = total time window, granularity =
+     *  bucket size derived from range unless user overrides. Filter = case-
+     *  insensitive substring match against session title; empty = all sessions. */
+    const speedDash = {
+      range: '24h',     // '1h' | '24h' | '7d'
+      granOverride: null, // null = auto from range
+      filter: '',
+      _chart: null,     // lazy-init ECharts instance
+    };
+    function granForRange(range, override) {
+      if (override) return override;
+      return { '1h': '5min', '24h': '1h', '7d': '1d' }[range] || '1h';
+    }
+    function granToMs(g) {
+      return { '5min': 5*60_000, '15min': 15*60_000, '1h': 3600_000, '6h': 6*3600_000, '1d': 86400_000 }[g] || 3600_000;
+    }
+    function rangeToMs(r) { return { '1h': 3600_000, '24h': 86400_000, '7d': 7*86400_000 }[r] || 86400_000; }
+
+    /** Compute 8 metric series across (filtered) sessions, bucketed by granularity.
+     *  Returns: { buckets: ts[], metrics: { [name]: number[][] } }
+     *  Each metric value is an array of raw samples per bucket; box plot will
+     *  reduce to [min, P25, P50, P75, max]. */
+    function buildSpeedSeries(rangeMs, granMs, filterText) {
       const now = Date.now();
-      const ONE_DAY_MS = 24 * ONE_HOUR_MS;
-
-      // 1-hour aggregate (for summary line) — same as before
-      const since1h = now - ONE_HOUR_MS;
-      const allTurns1h = [];
-      const allTtfws1h = [];
-      let calls1h = 0;
-      for (const evs of bySession.values()) {
-        const s = computeSpeedStats(evs, since1h);
-        if (s.medianTurnMs > 0) allTurns1h.push(s.medianTurnMs);
-        if (s.medianTtfwMs > 0) allTtfws1h.push(s.medianTtfwMs);
-        calls1h += s.toolCount;
-      }
-      const med = a => { if (!a.length) return 0; const s = a.slice().sort((x,y)=>x-y); return s[Math.floor(s.length/2)]; };
-      const turn1h = med(allTurns1h);
-      const ttfw1h = med(allTtfws1h);
-      summary.textContent = (calls1h === 0 && allTurns1h.length === 0)
-        ? 'no recent activity'
-        : 'turn ' + fmtDur(turn1h) + ' · ' + (calls1h / 60).toFixed(1) +
-          ' calls/min · TTFW ' + fmtDur(ttfw1h);
-
-      // 24-hour buckets (for trend chart). Each bucket = 1h.
-      const buckets = Array.from({length: 24}, () => ({ calls: 0, turnDurs: [] }));
-      for (const evs of bySession.values()) {
-        // Walk events once, bucket by hour-ago
+      const since = now - rangeMs;
+      const N = Math.ceil(rangeMs / granMs);
+      const buckets = Array.from({length: N}, (_, i) => now - (N - 1 - i) * granMs);
+      const empty = () => Array.from({length: N}, () => []);
+      const metrics = {
+        ttfw: empty(), turn: empty(), toolDur: empty(), tps: empty(),
+        toolsPerTurn: empty(), costPerTurn: empty(), waitTime: empty(), subagentCount: empty(),
+      };
+      const filt = (filterText || '').trim().toLowerCase();
+      for (const [sid, evs] of bySession.entries()) {
+        const meta = sessionMeta.get(sid);
+        if (filt) {
+          const t = (meta?.title || '').toLowerCase();
+          const proj = (typeof sessionProject === 'function' ? sessionProject(meta) : '').toLowerCase();
+          if (!t.includes(filt) && !proj.includes(filt) && !sid.toLowerCase().includes(filt)) continue;
+        }
+        // Walk events to extract per-turn aggregates + per-tool durations
         const idToPre = new Map();
         let cur = null;
+        let turnTools = 0;
+        let turnSubagents = 0;
+        let turnToolDurSum = 0;
         for (const e of evs) {
-          const ageMs = now - e.ts;
-          if (ageMs < 0 || ageMs >= ONE_DAY_MS) continue;
-          const bucketIdx = 23 - Math.floor(ageMs / ONE_HOUR_MS);
-          if (bucketIdx < 0 || bucketIdx >= 24) continue;
+          if (e.ts < since || e.ts > now) continue;
+          const bucketIdx = Math.floor((e.ts - since) / granMs);
+          if (bucketIdx < 0 || bucketIdx >= N) continue;
           const n = e.hook_event_name;
-          if (n === 'PreToolUse') {
-            buckets[bucketIdx].calls++;
-            if (e.tool_use_id) idToPre.set(e.tool_use_id, e.ts);
-            if (cur && !cur.firstToolTs) cur.firstToolTs = e.ts;
-            if (cur) cur.lastTs = e.ts;
-          } else if (n === 'UserPromptSubmit') {
+          if (n === 'UserPromptSubmit') {
             if (cur && cur.lastTs > cur.startTs) {
-              const tb = 23 - Math.floor((now - cur.startTs) / ONE_HOUR_MS);
-              if (tb >= 0 && tb < 24) buckets[tb].turnDurs.push(cur.lastTs - cur.startTs);
+              const tb = Math.floor((cur.startTs - since) / granMs);
+              if (tb >= 0 && tb < N) {
+                metrics.turn[tb].push(cur.lastTs - cur.startTs);
+                if (cur.firstToolTs) metrics.ttfw[tb].push(cur.firstToolTs - cur.startTs);
+                metrics.toolsPerTurn[tb].push(turnTools);
+                if (turnSubagents > 0) metrics.subagentCount[tb].push(turnSubagents);
+                const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
+                if (wait >= 0) metrics.waitTime[tb].push(wait);
+              }
             }
             cur = { startTs: e.ts, firstToolTs: 0, lastTs: e.ts };
+            turnTools = 0; turnSubagents = 0; turnToolDurSum = 0;
+          } else if (n === 'PreToolUse') {
+            if (cur) {
+              if (!cur.firstToolTs) cur.firstToolTs = e.ts;
+              cur.lastTs = e.ts;
+            }
+            turnTools++;
+            if (e.tool_name === 'Agent' || e.tool_name === 'Task') turnSubagents++;
+            if (e.tool_use_id) idToPre.set(e.tool_use_id, e.ts);
+          } else if (n === 'PostToolUse') {
+            if (cur) cur.lastTs = e.ts;
+            if (e.tool_use_id && idToPre.has(e.tool_use_id)) {
+              const dur = e.ts - idToPre.get(e.tool_use_id);
+              if (dur >= 0 && dur < 600_000) {
+                metrics.toolDur[bucketIdx].push(dur);
+                turnToolDurSum += dur;
+              }
+              idToPre.delete(e.tool_use_id);
+            }
           } else if (n === 'Stop') {
             if (cur) {
               cur.lastTs = e.ts;
-              const tb = 23 - Math.floor((now - cur.startTs) / ONE_HOUR_MS);
-              if (tb >= 0 && tb < 24) buckets[tb].turnDurs.push(cur.lastTs - cur.startTs);
-              cur = null;
+              const tb = Math.floor((cur.startTs - since) / granMs);
+              if (tb >= 0 && tb < N) {
+                metrics.turn[tb].push(cur.lastTs - cur.startTs);
+                if (cur.firstToolTs) metrics.ttfw[tb].push(cur.firstToolTs - cur.startTs);
+                metrics.toolsPerTurn[tb].push(turnTools);
+                if (turnSubagents > 0) metrics.subagentCount[tb].push(turnSubagents);
+                const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
+                if (wait >= 0) metrics.waitTime[tb].push(wait);
+              }
+              cur = null; turnTools = 0; turnSubagents = 0; turnToolDurSum = 0;
             }
-          } else if (n === 'PostToolUse') {
-            if (cur) cur.lastTs = e.ts;
           }
         }
         if (cur && cur.lastTs > cur.startTs) {
-          const tb = 23 - Math.floor((now - cur.startTs) / ONE_HOUR_MS);
-          if (tb >= 0 && tb < 24) buckets[tb].turnDurs.push(cur.lastTs - cur.startTs);
+          const tb = Math.floor((cur.startTs - since) / granMs);
+          if (tb >= 0 && tb < N) {
+            metrics.turn[tb].push(cur.lastTs - cur.startTs);
+            if (cur.firstToolTs) metrics.ttfw[tb].push(cur.firstToolTs - cur.startTs);
+            metrics.toolsPerTurn[tb].push(turnTools);
+            if (turnSubagents > 0) metrics.subagentCount[tb].push(turnSubagents);
+            const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
+            if (wait >= 0) metrics.waitTime[tb].push(wait);
+          }
+        }
+        // TPS approximation from JSONL usage events. Walk again for assistant_message-
+        // shaped events. The webview synthesizes PreToolUse/PostToolUse/UserPromptSubmit
+        // from JSONL but doesn't currently emit explicit assistant-message events with
+        // usage; SESSION_USAGE has TOTALS only. So TPS bucket is left empty unless we
+        // see token-tagged events. (Future: extension.ts could synthesize assist-msg events.)
+        // Cost per turn approximation: SESSION_USAGE.cost is total; spread across turns
+        // in this session inside the window proportional to turn count (rough).
+        const usage = SESSION_USAGE[sid];
+        if (usage && usage.cost > 0 && usage.msgCount > 0) {
+          // Count turns this session contributed to in window
+          let turnsInWindow = 0;
+          for (let i = 0; i < N; i++) turnsInWindow += metrics.turn[i].length;
+          if (turnsInWindow > 0) {
+            const costPerTurn = usage.cost / Math.max(usage.msgCount, 1);
+            // Tag each bucket with cost/turn IF the session contributed turns there
+            for (let i = 0; i < N; i++) {
+              for (let k = 0; k < metrics.turn[i].length; k++) {
+                metrics.costPerTurn[i].push(costPerTurn);
+              }
+            }
+          }
         }
       }
-
-      // Compute per-bucket aggregates
-      const callSeries = buckets.map(b => b.calls);
-      const turnSeries = buckets.map(b => b.turnDurs.length ? med(b.turnDurs) : null);
-      const maxCalls = Math.max(1, ...callSeries);
-      const maxTurn = Math.max(1, ...turnSeries.filter(x => x !== null));
-      const totalCalls24h = callSeries.reduce((a,b)=>a+b,0);
-      const turnsAll = buckets.flatMap(b => b.turnDurs);
-      const med24h = med(turnsAll);
-
-      // SVG path generators. Width: viewBox 240x60, leaving 4px gutter both sides.
-      const W = 240, H = 60, GUT = 4;
-      const xOf = i => GUT + (i / 23) * (W - 2 * GUT);
-      const yCalls = c => H - GUT - (c / maxCalls) * (H - 2 * GUT);
-      const yTurn = t => H - GUT - (t / maxTurn) * (H - 2 * GUT);
-      const callPath = callSeries.map((c, i) => (i === 0 ? 'M' : 'L') + xOf(i).toFixed(1) + ' ' + yCalls(c).toFixed(1)).join(' ');
-      // Turn line skips null buckets (gaps when no turn data)
-      let turnPath = '';
-      let started = false;
-      turnSeries.forEach((t, i) => {
-        if (t === null) { started = false; return; }
-        turnPath += (started ? 'L' : 'M') + xOf(i).toFixed(1) + ' ' + yTurn(t).toFixed(1) + ' ';
-        started = true;
-      });
-      const callDots = callSeries.map((c, i) => c > 0
-        ? '<circle cx="' + xOf(i).toFixed(1) + '" cy="' + yCalls(c).toFixed(1) + '" r="1.5" fill="#569CD6"/>'
-        : '').join('');
-      const turnDots = turnSeries.map((t, i) => t !== null
-        ? '<circle cx="' + xOf(i).toFixed(1) + '" cy="' + yTurn(t).toFixed(1) + '" r="1.5" fill="#F48771"/>'
-        : '').join('');
-
-      chart.innerHTML =
-        '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
-          '<line x1="0" y1="' + (H/2) + '" x2="' + W + '" y2="' + (H/2) + '" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>' +
-          '<path d="' + callPath + '" fill="none" stroke="#569CD6" stroke-width="1.4" stroke-linejoin="round"/>' +
-          (turnPath ? '<path d="' + turnPath + '" fill="none" stroke="#F48771" stroke-width="1.4" stroke-linejoin="round"/>' : '') +
-          callDots + turnDots +
-        '</svg>';
-      const legend = document.getElementById('speed-legend');
-      if (legend) {
-        legend.innerHTML =
-          '<span class="sc-leg"><span class="sc-dot" style="background:#569CD6"></span>calls/h · peak ' + maxCalls + '</span>' +
-          '<span class="sc-leg"><span class="sc-dot" style="background:#F48771"></span>turn p50 ' + fmtDur(med24h) + '</span>' +
-          '<span style="opacity:.5;margin-left:auto">' + totalCalls24h + ' total calls / 24h</span>';
-      }
+      return { buckets, metrics };
     }
 
+    /** Reduce a per-bucket sample array to ECharts boxplot format
+     *  [min, Q1, median, Q3, max]. Returns null if <3 samples. */
+    function boxStats(arr) {
+      if (!arr || arr.length < 3) return null;
+      const s = arr.slice().sort((a, b) => a - b);
+      const at = p => s[Math.min(s.length - 1, Math.max(0, Math.floor(p * (s.length - 1))))];
+      return [s[0], at(0.25), at(0.5), at(0.75), s[s.length - 1]];
+    }
+
+    /** ECharts options for the 8-panel grid. Each metric gets its own grid+xAxis+yAxis
+     *  with shared dataZoom slider at the bottom. */
+    function buildEchartsOption(seriesData) {
+      const { buckets, metrics } = seriesData;
+      const xAxisData = buckets.map(ts => new Date(ts).toISOString());
+      const PANELS = [
+        { key: 'ttfw',          label: 'TTFW (ms)',           unit: 'ms' },
+        { key: 'turn',          label: 'Turn latency (ms)',   unit: 'ms' },
+        { key: 'toolDur',       label: 'Tool duration (ms)',  unit: 'ms' },
+        { key: 'tps',           label: 'Output TPS (tok/s)',  unit: 'tok/s' },
+        { key: 'toolsPerTurn',  label: 'Tools / turn',        unit: '' },
+        { key: 'costPerTurn',   label: 'Cost / turn ($)',     unit: '$' },
+        { key: 'waitTime',      label: 'Wait time (ms)',      unit: 'ms' },
+        { key: 'subagentCount', label: 'Subagents / turn',    unit: '' },
+      ];
+      const COLS = 4;
+      const titles = [], grids = [], xAxes = [], yAxes = [], series = [];
+      // Layout: 8 panels in a 4×2 grid, each with a title above. Vertical gap
+      // between rows must clear row-1 x-axis labels + row-2 title.
+      const TOP = 6, BOTTOM = 16, GAP_X = 3, GAP_Y = 14;       // % of plot area
+      const TITLE_H = 4;                                       // % reserved for each panel title
+      const panelW = (100 - GAP_X * (COLS + 1)) / COLS;
+      const panelH = (100 - TOP - BOTTOM - GAP_Y) / 2 - TITLE_H;
+      PANELS.forEach((p, i) => {
+        const col = i % COLS, row = Math.floor(i / COLS);
+        const left = GAP_X + col * (panelW + GAP_X);
+        const titleTop = TOP + row * (panelH + TITLE_H + GAP_Y);
+        const gridTop = titleTop + TITLE_H;
+        titles.push({
+          text: p.label,
+          left: left + '%', top: titleTop + '%',
+          textStyle: { fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: 'normal' },
+        });
+        grids.push({
+          left: left + '%', top: gridTop + '%',
+          width: panelW + '%', height: panelH + '%',
+          containLabel: true,
+        });
+        xAxes.push({
+          type: 'category', gridIndex: i, data: xAxisData,
+          axisLabel: { show: row === 1, fontSize: 8, color: 'rgba(255,255,255,0.4)',
+                       formatter: (v) => { const d = new Date(v); return (d.getMonth()+1)+'/'+d.getDate()+' '+d.getHours()+'h'; },
+                       interval: Math.max(0, Math.floor(xAxisData.length / 3) - 1) },
+          axisLine: { lineStyle: { color: 'rgba(255,255,255,0.12)' } },
+          axisTick: { show: false },
+          splitLine: { show: false },
+        });
+        yAxes.push({
+          type: 'value', gridIndex: i,
+          axisLabel: { fontSize: 8, color: 'rgba(255,255,255,0.45)', margin: 2 },
+          axisLine: { show: false },
+          axisTick: { show: false },
+          splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } },
+          scale: true,
+        });
+        // ECharts boxplot wants [min,Q1,med,Q3,max] OR '-' for empty buckets.
+        // null causes a getInitialData crash inside ECharts internals.
+        const boxData = (metrics[p.key] || []).map(arr => boxStats(arr) || '-');
+        series.push({
+          name: p.label,
+          type: 'boxplot',
+          xAxisIndex: i, yAxisIndex: i,
+          data: boxData,
+          itemStyle: { color: 'rgba(86,156,214,0.4)', borderColor: '#9CDCFE' },
+          boxWidth: [4, 18],
+        });
+      });
+      return {
+        backgroundColor: 'transparent',
+        title: titles,
+        grid: grids, xAxis: xAxes, yAxis: yAxes, series,
+        tooltip: {
+          trigger: 'item',
+          backgroundColor: 'rgba(20,20,28,0.95)', borderColor: 'rgba(255,255,255,0.15)',
+          textStyle: { color: '#ddd', fontSize: 11 },
+          formatter: (param) => {
+            if (!param || !param.data || !Array.isArray(param.data) || param.data.length < 5) return '';
+            const [, , , , min, q1, med, q3, max] = param.data;
+            return param.seriesName + '<br/>min ' + Math.round(min) +
+                   '<br/>Q1 ' + Math.round(q1) + '<br/>median ' + Math.round(med) +
+                   '<br/>Q3 ' + Math.round(q3) + '<br/>max ' + Math.round(max);
+          },
+        },
+        dataZoom: [
+          { type: 'slider', xAxisIndex: PANELS.map((_, i) => i),
+            bottom: 4, height: 18,
+            backgroundColor: 'rgba(255,255,255,0.04)',
+            fillerColor: 'rgba(86,156,214,0.18)',
+            handleStyle: { color: '#569CD6' },
+            textStyle: { fontSize: 9, color: 'rgba(255,255,255,0.5)' } },
+          { type: 'inside', xAxisIndex: PANELS.map((_, i) => i) },
+        ],
+      };
+    }
+
+    function updateSpeed() {
+      const summary = document.getElementById('speed-summary');
+      if (summary) {
+        // Brief 1h summary line — same as before, doesn't depend on dashboard
+        const since1h = Date.now() - ONE_HOUR_MS;
+        let calls1h = 0, allTurns = [];
+        for (const evs of bySession.values()) {
+          const s = computeSpeedStats(evs, since1h);
+          if (s.medianTurnMs > 0) allTurns.push(s.medianTurnMs);
+          calls1h += s.toolCount;
+        }
+        const med = a => { if (!a.length) return 0; const s = a.slice().sort((x,y)=>x-y); return s[Math.floor(s.length/2)]; };
+        summary.textContent = (calls1h === 0 && allTurns.length === 0)
+          ? 'no recent activity'
+          : 'turn ' + fmtDur(med(allTurns)) + ' · ' + (calls1h / 60).toFixed(1) + ' calls/min (last 1h)';
+      }
+      // Render dashboard only when expanded AND ECharts loaded
+      if (!state.speedOpen) return;
+      if (typeof echarts === 'undefined') return;
+      const dash = document.getElementById('speed-dashboard');
+      if (!dash) return;
+      const range = speedDash.range;
+      const gran = granForRange(range, speedDash.granOverride);
+      const granLabel = document.getElementById('speed-gran-value');
+      if (granLabel) granLabel.textContent = gran;
+      const data = buildSpeedSeries(rangeToMs(range), granToMs(gran), speedDash.filter);
+      const opt = buildEchartsOption(data);
+      if (!speedDash._chart) {
+        speedDash._chart = echarts.init(dash, null, { renderer: 'canvas' });
+      }
+      speedDash._chart.setOption(opt, { notMerge: true });
+    }
     const spSection = document.getElementById('speed-section');
     const spHeader  = document.getElementById('speed-header');
     const spBody    = document.getElementById('speed-body');
@@ -3754,7 +3940,50 @@
         spSection.classList.toggle('open', willOpen);
         state.speedOpen = willOpen;
         vscode.setState(state);
-        if (willOpen) updateSpeed();
+        if (willOpen) {
+          // Resize ECharts when revealing — it can't measure inside a hidden parent
+          if (speedDash._chart) speedDash._chart.resize();
+          updateSpeed();
+        }
+      });
+      // Range buttons
+      document.querySelectorAll('.speed-range-buttons button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.speed-range-buttons button').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          speedDash.range = btn.dataset.range;
+          speedDash.granOverride = null; // reset to auto on range change
+          updateSpeed();
+        });
+      });
+      // Filter input — debounce
+      const filterInput = document.getElementById('speed-filter');
+      let filterDebounce = null;
+      if (filterInput) {
+        filterInput.addEventListener('input', e => {
+          clearTimeout(filterDebounce);
+          filterDebounce = setTimeout(() => {
+            speedDash.filter = e.target.value;
+            updateSpeed();
+          }, 200);
+        });
+      }
+      // Click on a session card → set filter to that session's title
+      document.getElementById('sessions')?.addEventListener('click', e => {
+        const card = e.target.closest('.session');
+        if (!card || !filterInput) return;
+        const sid = card.dataset.sid;
+        const meta = sid ? sessionMeta.get(sid) : null;
+        const title = meta?.title || sid?.slice(0, 8) || '';
+        if (title && state.speedOpen) {
+          filterInput.value = title;
+          speedDash.filter = title;
+          updateSpeed();
+        }
+      });
+      // Resize on window resize
+      window.addEventListener('resize', () => {
+        if (speedDash._chart && state.speedOpen) speedDash._chart.resize();
       });
     }
 
