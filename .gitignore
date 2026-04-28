@@ -5,6 +5,9 @@
 
 # Reference clones (pixel-agents / agent-flow) — credit in README
 vendor/
+# Exception: bundled runtime libraries (e.g. echarts) shipped with the extension
+!extension/media/vendor/
+!extension/media/vendor/**
 
 # Python cache
 **/__pycache__/
