@@ -3683,6 +3683,21 @@
         toolsPerTurn: empty(), costPerTurn: empty(), waitTime: empty(), subagentCount: empty(),
       };
       const filt = (filterText || '').trim().toLowerCase();
+      // Idle gap that closes a turn even without a Stop event. JSONL replay
+      // doesn't emit Stop, and live Stop events get lost across panel reloads,
+      // so without this a turn would span across actual conversational rounds
+      // joined only by hook event silence.
+      const IDLE_CLOSE_MS = 5 * 60 * 1000;
+      const flushTurn = (cur, turnTools, turnSubagents, turnToolDurSum) => {
+        const tb = Math.floor((cur.startTs - since) / granMs);
+        if (tb < 0 || tb >= N) return;
+        metrics.turn[tb].push((cur.lastTs - cur.startTs) / 1000);
+        if (cur.firstToolTs) metrics.ttfw[tb].push((cur.firstToolTs - cur.startTs) / 1000);
+        metrics.toolsPerTurn[tb].push(turnTools);
+        if (turnSubagents > 0) metrics.subagentCount[tb].push(turnSubagents);
+        const wait = (cur.lastTs - cur.startTs) - turnToolDurSum;
+        if (wait >= 0) metrics.waitTime[tb].push(wait / 1000);
+      };
       for (const [sid, evs] of bySession.entries()) {
         const meta = sessionMeta.get(sid);
         if (filt) {
@@ -3700,6 +3715,13 @@
           if (e.ts < since || e.ts > now) continue;
           const bucketIdx = Math.floor((e.ts - since) / granMs);
           if (bucketIdx < 0 || bucketIdx >= N) continue;
+          // If we've been idle > IDLE_CLOSE_MS, the previous turn ended even
+          // though we never saw a Stop. Close it at lastTs so the duration
+          // reflects active work, not "until-next-prompt".
+          if (cur && (e.ts - cur.lastTs) > IDLE_CLOSE_MS) {
+            flushTurn(cur, turnTools, turnSubagents, turnToolDurSum);
+            cur = null; turnTools = 0; turnSubagents = 0; turnToolDurSum = 0;
+          }
           const n = e.hook_event_name;
           if (n === 'UserPromptSubmit') {
             if (cur && cur.lastTs > cur.startTs) {
@@ -3762,23 +3784,19 @@
         }
       }
       // Cost/turn + Tokens/turn from PROMPT_COSTS — that's per-prompt actuals,
-      // computed by extension.ts from JSONL usage. (The earlier approach used
-      // SESSION_USAGE.cost / msgCount which gave a CONSTANT per session →
-      // box plot collapsed to a single line. Real distribution lives at the
-      // prompt level.)
-      const visibleSids = new Set();
-      for (const [sid] of bySession.entries()) {
-        if (!filt) { visibleSids.add(sid); continue; }
-        const meta = sessionMeta.get(sid);
-        const t = (meta?.title || '').toLowerCase();
-        const proj = (typeof sessionProject === 'function' ? sessionProject(meta) : '').toLowerCase();
-        if (t.includes(filt) || proj.includes(filt) || sid.toLowerCase().includes(filt)) {
-          visibleSids.add(sid);
-        }
-      }
+      // computed by extension.ts from JSONL usage. PROMPT_COSTS is independent
+      // of bySession (which only has sessions whose events were replayed yet),
+      // so we filter on PROMPT_COSTS directly. Empty filter = include all.
       for (const pc of (PROMPT_COSTS || [])) {
-        if (!visibleSids.has(pc.sessionId)) continue;
         if (pc.promptTs < since || pc.promptTs > now) continue;
+        if (filt) {
+          const meta = sessionMeta.get(pc.sessionId);
+          const t = (meta?.title || '').toLowerCase();
+          const proj = (typeof sessionProject === 'function' && meta ? sessionProject(meta) : '').toLowerCase();
+          const cwd = (pc.cwd || '').toLowerCase();
+          if (!t.includes(filt) && !proj.includes(filt) &&
+              !pc.sessionId.toLowerCase().includes(filt) && !cwd.includes(filt)) continue;
+        }
         const bi = Math.floor((pc.promptTs - since) / granMs);
         if (bi < 0 || bi >= N) continue;
         if (pc.cost > 0) metrics.costPerTurn[bi].push(pc.cost);
