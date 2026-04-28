@@ -234,19 +234,23 @@ const sessionEventCache = new Map<string, { events: HookEvent[]; touchedAt: numb
 const CACHE_DIR = path.join(os.homedir(), '.agents-viz', 'cache');
 function cachePath(sessionId: string): string { return path.join(CACHE_DIR, sessionId + '.json'); }
 
+// Bump when parser semantics change so stale caches get invalidated automatically.
+// v=2 (2026-04-27): tool_result parts inside user messages now emit PostToolUse;
+// older caches had 0 PostToolUse and silently broke tool-duration metrics.
+const PARSE_CACHE_VERSION = 2;
 function readDiskCache(sessionId: string, expectedMtime: number): HookEvent[] | null {
     try {
         const p = cachePath(sessionId);
         if (!fs.existsSync(p)) return null;
         const c = JSON.parse(fs.readFileSync(p, 'utf8'));
-        if (!c || c.mtime !== expectedMtime || !Array.isArray(c.events)) return null;
+        if (!c || c.mtime !== expectedMtime || c.v !== PARSE_CACHE_VERSION || !Array.isArray(c.events)) return null;
         return c.events as HookEvent[];
     } catch { return null; }
 }
 function writeDiskCache(sessionId: string, mtime: number, events: HookEvent[]): void {
     try {
         if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
-        fs.writeFileSync(cachePath(sessionId), JSON.stringify({ mtime, events }));
+        fs.writeFileSync(cachePath(sessionId), JSON.stringify({ v: PARSE_CACHE_VERSION, mtime, events }));
     } catch (e: any) { log(`cache write failed for ${sessionId}: ${e.message}`); }
 }
 
@@ -330,6 +334,17 @@ function parseSessionJsonl(sessionId: string): HookEvent[] | null {
             const promptText = typeof c === 'string' ? c : Array.isArray(c) ? (c.find((x: any) => x.type === 'text')?.text || '') : '';
             if (promptText && promptText.length > 0 && !promptText.startsWith('<')) {
                 all.push({ ...base, hook_event_name: 'UserPromptSubmit', prompt: promptText });
+            }
+            // tool_result parts arrive INSIDE user messages (Claude Code wraps the
+            // tool execution result as a user-role message before the model sees it).
+            // Without iterating these, historical replay produces 0 PostToolUse events
+            // and any "tool duration" metric is silently broken.
+            if (Array.isArray(c)) {
+                for (const part of c) {
+                    if (part?.type === 'tool_result') {
+                        all.push({ ...base, hook_event_name: 'PostToolUse', tool_name: '', tool_use_id: part.tool_use_id });
+                    }
+                }
             }
         } else if (j.message?.content && Array.isArray(j.message.content)) {
             for (const part of j.message.content) {

@@ -3679,7 +3679,7 @@
       const buckets = Array.from({length: N}, (_, i) => now - (N - 1 - i) * granMs);
       const empty = () => Array.from({length: N}, () => []);
       const metrics = {
-        ttfw: empty(), turn: empty(), toolDur: empty(), tps: empty(),
+        ttfw: empty(), turn: empty(), toolDur: empty(), tokensPerTurn: empty(),
         toolsPerTurn: empty(), costPerTurn: empty(), waitTime: empty(), subagentCount: empty(),
       };
       const filt = (filterText || '').trim().toLowerCase();
@@ -3760,28 +3760,29 @@
             if (wait >= 0) metrics.waitTime[tb].push(wait);
           }
         }
-        // TPS approximation from JSONL usage events. Walk again for assistant_message-
-        // shaped events. The webview synthesizes PreToolUse/PostToolUse/UserPromptSubmit
-        // from JSONL but doesn't currently emit explicit assistant-message events with
-        // usage; SESSION_USAGE has TOTALS only. So TPS bucket is left empty unless we
-        // see token-tagged events. (Future: extension.ts could synthesize assist-msg events.)
-        // Cost per turn approximation: SESSION_USAGE.cost is total; spread across turns
-        // in this session inside the window proportional to turn count (rough).
-        const usage = SESSION_USAGE[sid];
-        if (usage && usage.cost > 0 && usage.msgCount > 0) {
-          // Count turns this session contributed to in window
-          let turnsInWindow = 0;
-          for (let i = 0; i < N; i++) turnsInWindow += metrics.turn[i].length;
-          if (turnsInWindow > 0) {
-            const costPerTurn = usage.cost / Math.max(usage.msgCount, 1);
-            // Tag each bucket with cost/turn IF the session contributed turns there
-            for (let i = 0; i < N; i++) {
-              for (let k = 0; k < metrics.turn[i].length; k++) {
-                metrics.costPerTurn[i].push(costPerTurn);
-              }
-            }
-          }
+      }
+      // Cost/turn + Tokens/turn from PROMPT_COSTS — that's per-prompt actuals,
+      // computed by extension.ts from JSONL usage. (The earlier approach used
+      // SESSION_USAGE.cost / msgCount which gave a CONSTANT per session →
+      // box plot collapsed to a single line. Real distribution lives at the
+      // prompt level.)
+      const visibleSids = new Set();
+      for (const [sid] of bySession.entries()) {
+        if (!filt) { visibleSids.add(sid); continue; }
+        const meta = sessionMeta.get(sid);
+        const t = (meta?.title || '').toLowerCase();
+        const proj = (typeof sessionProject === 'function' ? sessionProject(meta) : '').toLowerCase();
+        if (t.includes(filt) || proj.includes(filt) || sid.toLowerCase().includes(filt)) {
+          visibleSids.add(sid);
         }
+      }
+      for (const pc of (PROMPT_COSTS || [])) {
+        if (!visibleSids.has(pc.sessionId)) continue;
+        if (pc.promptTs < since || pc.promptTs > now) continue;
+        const bi = Math.floor((pc.promptTs - since) / granMs);
+        if (bi < 0 || bi >= N) continue;
+        if (pc.cost > 0) metrics.costPerTurn[bi].push(pc.cost);
+        if (pc.tokens > 0) metrics.tokensPerTurn[bi].push(pc.tokens);
       }
       return { buckets, metrics };
     }
@@ -3804,7 +3805,7 @@
         { key: 'ttfw',          label: 'TTFW (ms)',           unit: 'ms' },
         { key: 'turn',          label: 'Turn latency (ms)',   unit: 'ms' },
         { key: 'toolDur',       label: 'Tool duration (ms)',  unit: 'ms' },
-        { key: 'tps',           label: 'Output TPS (tok/s)',  unit: 'tok/s' },
+        { key: 'tokensPerTurn', label: 'Tokens / turn',       unit: 'tok' },
         { key: 'toolsPerTurn',  label: 'Tools / turn',        unit: '' },
         { key: 'costPerTurn',   label: 'Cost / turn ($)',     unit: '$' },
         { key: 'waitTime',      label: 'Wait time (ms)',      unit: 'ms' },
