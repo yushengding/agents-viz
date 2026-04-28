@@ -2453,6 +2453,21 @@
       };
     }
 
+    /** Compact magnitude-based number format for dashboard axes + tooltips.
+     *  0.50 / 12.3 / 234 / 1.2k / 5.1M / 1.2B — same logic for any unit, since
+     *  what matters is "easy to scan in a 60px panel" not "preserve precision". */
+    function compactFmt(v) {
+      if (!Number.isFinite(v)) return '';
+      if (v === 0) return '0';
+      const abs = Math.abs(v);
+      if (abs < 1) return v.toFixed(2);
+      if (abs < 100) return v.toFixed(1).replace(/\.0$/, '');
+      if (abs < 1000) return Math.round(v).toString();
+      if (abs < 1_000_000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+      if (abs < 1_000_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+      return (v / 1_000_000_000).toFixed(2) + 'B';
+    }
+
     /** Format a duration in ms as a compact human string. */
     function fmtDur(ms) {
       if (!ms || ms < 0) return '—';
@@ -3849,7 +3864,8 @@
         });
         yAxes.push({
           type: 'value', gridIndex: i,
-          axisLabel: { fontSize: 8, color: 'rgba(255,255,255,0.45)', margin: 2 },
+          axisLabel: { fontSize: 8, color: 'rgba(255,255,255,0.45)', margin: 2,
+                       formatter: (v) => compactFmt(v) },
           axisLine: { show: false },
           axisTick: { show: false },
           splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } },
@@ -3881,13 +3897,12 @@
             const arr = (param && (param.value || param.data)) || null;
             if (!Array.isArray(arr) || arr.length < 5) return '';
             const [min, q1, med, q3, max] = arr.slice(-5);
-            const fmt = v => Number.isFinite(v) ? (v < 100 ? v.toFixed(2) : Math.round(v).toLocaleString()) : '—';
             return '<b>' + (param.seriesName || '') + '</b>' +
-                   '<br/>min ' + fmt(min) +
-                   '<br/>Q1 ' + fmt(q1) +
-                   '<br/>median ' + fmt(med) +
-                   '<br/>Q3 ' + fmt(q3) +
-                   '<br/>max ' + fmt(max);
+                   '<br/>min ' + compactFmt(min) +
+                   '<br/>Q1 ' + compactFmt(q1) +
+                   '<br/>median ' + compactFmt(med) +
+                   '<br/>Q3 ' + compactFmt(q3) +
+                   '<br/>max ' + compactFmt(max);
           },
         },
         dataZoom: [
