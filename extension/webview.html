@@ -392,8 +392,20 @@
     .avatar.avatar-host .room-char.sidebar-char .pixel.busy {
       animation: typeAtDesk 0.35s steps(1) infinite !important;
     }
+    /* Waiting (notification) — pin sprite to the wave frame (col=2 row=1 of all
+     * v17c+ LPC sheets, available in 40/40 chars per manifests) so the
+     * character actually raises a hand instead of just shaking. Subtle bob
+     * animation reads as "hello, attention please" rather than "stuck/error".
+     * For chars whose manifest lacks a wave frame (legacy _default.json), the
+     * background-position falls back to whatever's in cell (2,1), or empty
+     * if the sheet is smaller — visually still readable as a notification cue. */
     .avatar.avatar-host .room-char.sidebar-char .pixel.waiting {
-      animation: shake 0.4s ease-in-out infinite !important;
+      background-position: calc(var(--cell-w) * -2) calc(var(--cell-h) * -1) !important;
+      animation: waveBob 0.7s ease-in-out infinite !important;
+    }
+    @keyframes waveBob {
+      0%, 100% { transform: translateY(0)    rotate(-1deg); }
+      50%      { transform: translateY(-2px) rotate(2deg); }
     }
     /* Long-stale: egg-pod pose. Re-assert native sizing + head-only mask. */
     .avatar.avatar-host .room-char.sidebar-char.long-stale .pixel {
