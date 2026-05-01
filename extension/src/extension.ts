@@ -29,12 +29,19 @@ function sendToRecycleBin(filePath: string): boolean {
 const DISCOVERY_DIR = path.join(os.homedir(), '.agents-viz');
 const CLAUDE_SETTINGS = path.join(os.homedir(), '.claude', 'settings.json');
 const HOOK_EVENTS = [
+    // Session-scoped — carry per-session cwd, routed by workspace match.
     'SessionStart',
     'UserPromptSubmit',
     'PreToolUse',
     'PostToolUse',
     'Stop',
     'Notification',
+    // Team-scoped (Claude Code Teams Feb 2026 experimental). No cwd; the
+    // forwarder broadcasts these to every alive panel. Architect's
+    // handleHookEvent() dispatches by hook_event_name.
+    'TeammateIdle',
+    'TaskCreated',
+    'TaskCompleted',
 ] as const;
 
 let panel: vscode.WebviewPanel | undefined;
@@ -64,6 +71,90 @@ interface HookEvent {
     [k: string]: any;
 }
 
+// ─── Claude Code Teams (Feb 2026 experimental) state.
+//     Schema mirrors `docs/TEAMS_DECISIONS.md` §1 (snake_case fields, derived
+//     lifecycle/spend, message ring buffer). Persisted to
+//     `~/.agents-viz/team-cache.json` keyed by (config_size, config_mtime),
+//     same invalidation pattern as `usage-cache.json` (`scanFileWithCache`).
+//     File layout for source-of-truth:
+//       ~/.claude/teams/{team-name}/config.json   ← member roster
+//       ~/.claude/tasks/{team-name}/*.json        ← one file per task
+interface TeamMember {
+    name: string;
+    agent_id?: string;
+    agent_type?: string;
+    session_id?: string;
+}
+type LifecycleState = 'init' | 'active' | 'idle' | 'archived' | 'deleted';
+interface TasksSummary {
+    total: number;
+    completed: number;
+    in_progress: number;
+    pending: number;
+}
+interface TeamTaskFull {
+    id: string;
+    subject: string;
+    description?: string;
+    status: 'pending' | 'in_progress' | 'completed';
+    owner?: string;
+    blockedBy?: string[];
+    blocks?: string[];
+    createdAt?: number;
+    updatedAt?: number;
+}
+interface TeamEntry {
+    config_size: number;
+    config_mtime: number;
+    members: TeamMember[];
+    first_seen_ts: number;
+    last_active_ts: number;
+    lifecycle_state: LifecycleState;
+    tasks_summary: TasksSummary;
+    tasks: TeamTaskFull[];           // full bodies for kanban dependency rendering
+    pending_inbox: Record<string, number>;   // teammate-name → count of pending inbox files
+    deleted_at?: number;   // wall-clock when config.json went missing; tombstone GC after 7d
+    inbox_gc_done?: boolean;   // set once we wipe ~/.agents-viz/inbox/{team}/ on archived/deleted-tombstone
+}
+interface TeamMessage {
+    ts: number;
+    from: string;
+    to: string;
+    text_excerpt: string;       // capped at TEXT_EXCERPT_MAX (240) on write
+    transcript_path?: string;
+}
+interface TeamCache {
+    version: number;
+    teams: Record<string, TeamEntry>;
+    messages: Record<string, TeamMessage[]>;  // ring buffer per team, FIFO
+}
+const TEAMS_DIR = path.join(os.homedir(), '.claude', 'teams');
+const TASKS_DIR = path.join(os.homedir(), '.claude', 'tasks');
+const INBOX_DIR = path.join(os.homedir(), '.agents-viz', 'inbox');
+const TEAM_CACHE_FILE = path.join(os.homedir(), '.agents-viz', 'team-cache.json');
+const TEAM_CACHE_VERSION = 4;     // bumps: v1→v2 added `tasks`+`pending_inbox`; v2→v3 added `inbox_gc_done`; v3→v4 purges phantom UUID-name entries that leaked in from misreading ~/.claude/tasks/* as teams
+const TEXT_EXCERPT_MAX = 240;
+const MSG_RING_PER_TEAM = 5000;
+// Lifecycle thresholds. AGENTS_VIZ_LIFECYCLE_FAST_MS env override (in ms) shrinks
+// BOTH stale and long-stale to ~1× and ~24× of that base — used by qa-auditor to
+// run Race B / Inv 3 (lifecycle monotonic-forward) without 1h/24h waits.
+function _lifecycleThresholds() {
+    const fast = parseInt(process.env.AGENTS_VIZ_LIFECYCLE_FAST_MS || '', 10);
+    if (Number.isFinite(fast) && fast > 0) {
+        return { stale: fast, longStale: fast * 24, tombstone: fast * 168 };
+    }
+    return { stale: 60 * 60 * 1000, longStale: 24 * 60 * 60 * 1000, tombstone: 7 * 24 * 60 * 60 * 1000 };
+}
+const STALE_MS_TEAMS = _lifecycleThresholds().stale;
+const LONG_STALE_MS_TEAMS = _lifecycleThresholds().longStale;
+const TOMBSTONE_MS = _lifecycleThresholds().tombstone;
+let teamsCache: TeamCache = { version: TEAM_CACHE_VERSION, teams: {}, messages: {} };
+let teamsConfigWatcher: fs.FSWatcher | undefined;
+let teamsTasksWatcher: fs.FSWatcher | undefined;
+let teamsInboxWatcher: fs.FSWatcher | undefined;
+let teamsRefreshTimer: NodeJS.Timeout | undefined;
+let inboxRefreshTimer: NodeJS.Timeout | undefined;
+
 let outputChannel: vscode.OutputChannel | undefined;
 function log(msg: string) {
     const line = `[${new Date().toTimeString().slice(0, 8)}] ${msg}`;
@@ -79,6 +170,13 @@ async function startHookServer(workspace: string): Promise<number> {
     return new Promise((resolve, reject) => {
         authToken = crypto.randomBytes(16).toString('hex');
         server = http.createServer((req, res) => {
+            // Read-only debug + frontend read-back endpoint for the live teams state.
+            // Returns the §1 TeamCache shape ({version, teams, messages}) verbatim.
+            if (req.method === 'GET' && req.url === '/api/teams') {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(teamsCache));
+                return;
+            }
             if (req.method !== 'POST' || req.url !== '/api/hooks/claude') {
                 res.writeHead(404); res.end(); return;
             }
@@ -598,6 +696,357 @@ function scanCachedAll(workspace: string, sessionsPerProject = 50): { usage: Map
 }
 
 
+// ─── Persistence: load + save team-cache.json. Mirrors usage-cache.json
+//     conventions — discard on version mismatch, atomic write via mkdir + writeFile.
+function loadTeamCache(): void {
+    try {
+        const raw = fs.readFileSync(TEAM_CACHE_FILE, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.version === TEAM_CACHE_VERSION) {
+            teamsCache = {
+                version: TEAM_CACHE_VERSION,
+                teams: parsed.teams || {},
+                messages: parsed.messages || {},
+            };
+        } else {
+            log(`team-cache version mismatch (have ${parsed?.version}, want ${TEAM_CACHE_VERSION}) — discarding`);
+            teamsCache = { version: TEAM_CACHE_VERSION, teams: {}, messages: {} };
+        }
+    } catch { /* missing — leave empty */ }
+}
+function saveTeamCache(): void {
+    try {
+        fs.mkdirSync(path.dirname(TEAM_CACHE_FILE), { recursive: true });
+        fs.writeFileSync(TEAM_CACHE_FILE, JSON.stringify(teamsCache));
+    } catch (e: any) { log(`save team cache failed: ${e.message}`); }
+}
+
+// Wipe ~/.agents-viz/inbox/{team}/ when team enters archived OR tombstone-GC'd deleted.
+// Per TEAMS_DECISIONS.md §2 "Final v1 store layout" (line 87 — "No fifth audit log;
+// transcript.jsonl is the canonical record"): the v1 stores under inbox/ are exactly
+// (1) {team}/{teammate}/{ts}.json pending slots and (2) workspace-global _dropped.log.
+// _dropped.log lives OUTSIDE {team}/ so rm -rf of {team}/ never touches it.
+// Resurrection note: per §3, "unarchive" forces back to active for 1h. If hooks-devops
+// already delivered messages from the dir before we wiped, those landed in transcript
+// already — no preservation needed.
+function wipeInboxDir(teamName: string): void {
+    const safe = teamName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const dir = path.join(INBOX_DIR, safe);
+    if (!fs.existsSync(dir)) return;
+    try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        log(`inbox GC: wiped ${dir}`);
+    } catch (e: any) { log(`inbox GC failed for ${dir}: ${e.message}`); }
+}
+
+// Derive lifecycle state from §3 truth table. Inputs: most-recent activity
+// timestamp + open-task count. Reuses STALE_MS / LONG_STALE_MS thresholds.
+function deriveLifecycle(
+    hasConfig: boolean,
+    lastActiveTs: number,
+    openTasks: number,
+    everSeenActivity: boolean,
+): LifecycleState {
+    if (!hasConfig) return 'deleted';
+    if (!everSeenActivity) return 'init';
+    const since = Date.now() - lastActiveTs;
+    if (since >= LONG_STALE_MS_TEAMS && openTasks === 0) return 'archived';
+    if (since >= STALE_MS_TEAMS && openTasks > 0) return 'idle';
+    return 'active';
+}
+
+// ─── Teams: re-derive `teamsCache.teams` (and bookkeeping) from disk.
+//     Called on a debounced refresh from fs.watch + on every team-hook event.
+//     Schema follows TEAMS_DECISIONS.md §1.
+// Reject names that look like Claude Code session UUIDs (8-4-4-4-12 hex).
+// Claude Code's regular TaskCreate tool stores per-session task lists at
+// `~/.claude/tasks/<session-uuid>/` — those are NOT teams. Without this filter
+// every running session's task dir leaked into the cache as a phantom team.
+const SESSION_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function looksLikeTeamName(name: string): boolean {
+    return !!name && !SESSION_UUID_RE.test(name);
+}
+
+function refreshTeamsFromDisk(): void {
+    let teamDirs: string[] = [];
+    try { teamDirs = fs.readdirSync(TEAMS_DIR); } catch { /* ENOENT — no teams yet */ }
+    // Authoritative team list = directories under TEAMS_DIR that actually carry
+    // a `config.json`. The TASKS_DIR is shared with Claude Code's regular
+    // session-scoped task store and MUST NOT be used to discover team names —
+    // it would (and historically did) flood the cache with UUID phantoms.
+    const validTeamDirs = teamDirs.filter(name => {
+        if (!looksLikeTeamName(name)) return false;
+        try { return fs.statSync(path.join(TEAMS_DIR, name, 'config.json')).isFile(); } catch { return false; }
+    });
+    // Also keep visiting cached entries (so tombstones still GC) but reject UUIDs.
+    const cachedNames = Object.keys(teamsCache.teams).filter(looksLikeTeamName);
+    const allTeamNames = new Set<string>([...validTeamDirs, ...cachedNames]);
+    // Drop any UUID phantoms still sitting in the cache from older builds.
+    for (const k of Object.keys(teamsCache.teams)) {
+        if (!looksLikeTeamName(k)) {
+            delete teamsCache.teams[k];
+            delete teamsCache.messages[k];
+        }
+    }
+    const now = Date.now();
+
+    for (const teamName of allTeamNames) {
+        const cfgPath = path.join(TEAMS_DIR, teamName, 'config.json');
+        let configSize = 0, configMtime = 0;
+        let hasConfig = false;
+        try {
+            const st = fs.statSync(cfgPath);
+            configSize = st.size; configMtime = st.mtimeMs;
+            hasConfig = true;
+        } catch {}
+
+        // Race C unlink-defer (per product-lead option (a)): on Windows, fs.watch
+        // can fire an unlink event before the OS releases the file (antivirus, AV-scanner,
+        // dir-junction quirks). If the previous frame had this team alive AND now config
+        // is missing, treat it as suspect this frame: skip the deletion transition,
+        // schedule a re-check in 200ms. If the file is genuinely gone, the re-check
+        // will see it absent again and proceed. If a false positive (file reappears),
+        // the team stays in its prior state. Per-event, only on the deletion edge.
+        if (!hasConfig && teamsCache.teams[teamName] && teamsCache.teams[teamName].lifecycle_state !== 'deleted') {
+            log(`Race C: deferring delete-state transition for team=${teamName} (200ms re-stat)`);
+            setTimeout(() => scheduleTeamsRefresh(), 200);
+            continue;   // keep prev entry as-is this frame
+        }
+
+        // (size, mtime) cache check — skip re-parse when config unchanged AND tasks dir unchanged.
+        // Tasks dir mtime is cheap (single stat) and bumps on file create/delete inside.
+        const prev = teamsCache.teams[teamName];
+        let tasksDirMtime = 0;
+        try { tasksDirMtime = fs.statSync(path.join(TASKS_DIR, teamName)).mtimeMs; } catch {}
+        const configUnchanged = prev && prev.config_size === configSize && prev.config_mtime === configMtime;
+        const tasksDirUnchanged = prev && (prev as any)._tasks_dir_mtime === tasksDirMtime;
+
+        let members: TeamMember[] = prev ? prev.members : [];
+        if (!configUnchanged && hasConfig) {
+            try {
+                const cfgRaw = fs.readFileSync(cfgPath, 'utf8');
+                const cfg = JSON.parse(cfgRaw);
+                // Tolerate either source-of-truth shape (snake or camel) — emit snake.
+                const rawMembers = Array.isArray(cfg?.members) ? cfg.members : [];
+                members = rawMembers.map((m: any) => ({
+                    name: m.name || '',
+                    agent_id: m.agent_id ?? m.agentId,
+                    agent_type: m.agent_type ?? m.agentType,
+                    session_id: m.session_id ?? (Array.isArray(m.sessionIds) ? m.sessionIds[0] : m.sessionId),
+                }));
+            } catch { /* mid-write — keep prev members */ }
+        }
+
+        // Tasks summary + full bodies + last-active recompute. Always re-stat tasks dir; small cost.
+        let tasksSummary: TasksSummary = { total: 0, completed: 0, in_progress: 0, pending: 0 };
+        let tasksFull: TeamTaskFull[] = [];
+        let mostRecentTaskTs = 0;
+        const taskDir = path.join(TASKS_DIR, teamName);
+        let taskFiles: string[] = [];
+        try { taskFiles = fs.readdirSync(taskDir).filter(f => f.endsWith('.json')); } catch {}
+        if (!tasksDirUnchanged || !prev) {
+            for (const f of taskFiles) {
+                try {
+                    const fp = path.join(taskDir, f);
+                    const raw = fs.readFileSync(fp, 'utf8');
+                    const t = JSON.parse(raw);
+                    if (!t || !t.id) continue;
+                    tasksSummary.total++;
+                    if (t.status === 'completed') tasksSummary.completed++;
+                    else if (t.status === 'in_progress') tasksSummary.in_progress++;
+                    else tasksSummary.pending++;
+                    const ts = t.updatedAt || t.createdAt || 0;
+                    if (ts > mostRecentTaskTs) mostRecentTaskTs = ts;
+                    tasksFull.push({
+                        id: String(t.id),
+                        subject: t.subject || '',
+                        description: t.description,
+                        status: (t.status === 'completed' || t.status === 'in_progress') ? t.status : 'pending',
+                        owner: t.owner,
+                        blockedBy: Array.isArray(t.blockedBy) ? t.blockedBy.map(String) : undefined,
+                        blocks: Array.isArray(t.blocks) ? t.blocks.map(String) : undefined,
+                        createdAt: t.createdAt,
+                        updatedAt: t.updatedAt,
+                    });
+                } catch { /* mid-write race — skip; next refresh picks it up */ }
+            }
+        } else {
+            tasksSummary = prev.tasks_summary;
+            tasksFull = prev.tasks || [];
+            mostRecentTaskTs = prev.last_active_ts;
+        }
+
+        const firstSeenTs = prev ? prev.first_seen_ts : (hasConfig ? configMtime || now : now);
+        const lastActiveTs = Math.max(prev?.last_active_ts || 0, mostRecentTaskTs, hasConfig ? configMtime : 0);
+        const everSeenActivity = (prev?.lifecycle_state && prev.lifecycle_state !== 'init')
+            || tasksSummary.total > 0
+            || (members.length > 0 && hasConfig);
+        const openTasks = tasksSummary.pending + tasksSummary.in_progress;
+        const lifecycle = deriveLifecycle(hasConfig, lastActiveTs, openTasks, !!everSeenActivity);
+
+        const entry: TeamEntry = {
+            config_size: configSize,
+            config_mtime: configMtime,
+            members,
+            first_seen_ts: firstSeenTs,
+            last_active_ts: lastActiveTs,
+            lifecycle_state: lifecycle,
+            tasks_summary: tasksSummary,
+            tasks: tasksFull,
+            pending_inbox: prev?.pending_inbox || {},
+        };
+        // tasks_dir_mtime kept on the entry as an internal _ field for cache short-circuit
+        (entry as any)._tasks_dir_mtime = tasksDirMtime;
+        // Inbox GC: on first transition into archived OR at tombstone GC, wipe the
+        // per-team inbox dir. Idempotent via inbox_gc_done flag.
+        if (lifecycle === 'archived' && !prev?.inbox_gc_done) {
+            wipeInboxDir(teamName);
+            entry.inbox_gc_done = true;
+        } else if (prev?.inbox_gc_done) {
+            entry.inbox_gc_done = true;   // preserve flag across refreshes
+        }
+        if (lifecycle === 'deleted') {
+            entry.deleted_at = prev?.deleted_at || now;
+            // Tombstone GC after 7d: drop entry entirely + wipe inbox dir if not already.
+            if (now - entry.deleted_at > TOMBSTONE_MS) {
+                if (!entry.inbox_gc_done) wipeInboxDir(teamName);
+                delete teamsCache.teams[teamName];
+                delete teamsCache.messages[teamName];
+                continue;
+            }
+        }
+        teamsCache.teams[teamName] = entry;
+    }
+    saveTeamCache();
+}
+
+// Append a message to a team's ring buffer, FIFO-evicting the oldest when full.
+// Excerpts hard-capped at TEXT_EXCERPT_MAX. Use when a SendMessage hook is observed
+// (Phase 2 — currently no producer; ring stays empty, frontend tolerates absence).
+function appendTeamMessage(teamName: string, msg: TeamMessage): void {
+    if (!teamsCache.messages[teamName]) teamsCache.messages[teamName] = [];
+    const ring = teamsCache.messages[teamName];
+    msg.text_excerpt = (msg.text_excerpt || '').slice(0, TEXT_EXCERPT_MAX);
+    ring.push(msg);
+    if (ring.length > MSG_RING_PER_TEAM) ring.splice(0, ring.length - MSG_RING_PER_TEAM);
+    // Bump last_active_ts so lifecycle reflects message activity, not just task changes.
+    const entry = teamsCache.teams[teamName];
+    if (entry) entry.last_active_ts = Math.max(entry.last_active_ts, msg.ts);
+    saveTeamCache();
+}
+
+function scheduleTeamsRefresh(): void {
+    if (teamsRefreshTimer) return;  // already pending — debounce coalesces bursts
+    teamsRefreshTimer = setTimeout(() => {
+        teamsRefreshTimer = undefined;
+        refreshTeamsFromDisk();
+        if (panel) panel.webview.postMessage({ type: 'teams-update', teams: teamsCache });
+    }, 500);
+}
+
+// ─── Inbox: count pending messages per (team, teammate) by walking
+//     ~/.agents-viz/inbox/{team}/{teammate}/*.json. Push counts into TeamEntry
+//     and emit `inbox-pending` to webview so the composer shows pending state.
+function refreshInboxPending(): void {
+    let teamDirs: string[] = [];
+    try { teamDirs = fs.readdirSync(INBOX_DIR); } catch { /* ENOENT — no inbox yet */ }
+    for (const teamName of teamDirs) {
+        if (teamName.startsWith('_')) continue;     // skip _dropped.log etc.
+        const teamPath = path.join(INBOX_DIR, teamName);
+        let teammateDirs: string[] = [];
+        try { teammateDirs = fs.readdirSync(teamPath); } catch { continue; }
+        const counts: Record<string, number> = {};
+        for (const teammate of teammateDirs) {
+            const inboxPath = path.join(teamPath, teammate);
+            try {
+                const stat = fs.statSync(inboxPath);
+                if (!stat.isDirectory()) continue;
+                const pending = fs.readdirSync(inboxPath).filter(f => f.endsWith('.json'));
+                counts[teammate] = pending.length;
+            } catch {}
+        }
+        // Update existing entry; if team isn't in cache yet (Phase 2 race), defer.
+        const entry = teamsCache.teams[teamName];
+        if (entry) entry.pending_inbox = counts;
+        if (panel) {
+            for (const [teammate, count] of Object.entries(counts)) {
+                panel.webview.postMessage({ type: 'inbox-pending', team: teamName, teammate, count });
+            }
+        }
+    }
+}
+
+function scheduleInboxRefresh(): void {
+    if (inboxRefreshTimer) return;
+    inboxRefreshTimer = setTimeout(() => {
+        inboxRefreshTimer = undefined;
+        refreshInboxPending();
+    }, 300);
+}
+
+// Atomic write: tmp + rename. Filename includes both ts and a 6-char crypto random
+// suffix so two simultaneous dashboard replies in the same ms don't collide.
+function writeInboxMessage(team: string, teammate: string, payload: any): { ok: boolean; error?: string; path?: string } {
+    if (!team || !teammate) return { ok: false, error: 'team and teammate are required' };
+    const safe = (s: string) => s.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const dir = path.join(INBOX_DIR, safe(team), safe(teammate));
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e: any) { return { ok: false, error: `mkdir failed: ${e.message}` }; }
+    const ts = payload.ts || Date.now();
+    const suffix = crypto.randomBytes(3).toString('hex');
+    const finalPath = path.join(dir, `${ts}-${suffix}.json`);
+    const tmpPath = finalPath + '.tmp';
+    const body = {
+        ts,
+        from: payload.from || 'dashboard-user',
+        to: teammate,
+        kind: payload.kind || 'request',
+        text: payload.text || '',
+        ...(payload.ttl_ms ? { ttl_ms: payload.ttl_ms } : {}),
+    };
+    try {
+        fs.writeFileSync(tmpPath, JSON.stringify(body));
+        fs.renameSync(tmpPath, finalPath);
+    } catch (e: any) {
+        try { fs.unlinkSync(tmpPath); } catch {}
+        return { ok: false, error: `write failed: ${e.message}` };
+    }
+    log(`team_reply: wrote inbox slot ${finalPath}`);
+    scheduleInboxRefresh();
+    return { ok: true, path: finalPath };
+}
+
+// fs.watch over the two team roots. Watchers are recursive so a new team-dir
+// or task-file inside it bubbles up. Survive ENOENT — directories are created
+// lazily by Claude Code when the first team / task is created.
+function startTeamsWatchers(): void {
+    stopTeamsWatchers();
+    loadTeamCache();
+    try { fs.mkdirSync(TEAMS_DIR, { recursive: true }); } catch {}
+    try { fs.mkdirSync(TASKS_DIR, { recursive: true }); } catch {}
+    try { fs.mkdirSync(INBOX_DIR, { recursive: true }); } catch {}
+    try {
+        teamsConfigWatcher = fs.watch(TEAMS_DIR, { recursive: true }, () => scheduleTeamsRefresh());
+    } catch (e: any) { log(`teams config watcher failed: ${e.message}`); }
+    try {
+        teamsTasksWatcher = fs.watch(TASKS_DIR, { recursive: true }, () => scheduleTeamsRefresh());
+    } catch (e: any) { log(`teams tasks watcher failed: ${e.message}`); }
+    // One recursive watcher on inbox/ — fires for any *.json create/delete inside
+    // any team/teammate subdir. Avoids the per-teammate watcher explosion.
+    try {
+        teamsInboxWatcher = fs.watch(INBOX_DIR, { recursive: true }, () => scheduleInboxRefresh());
+    } catch (e: any) { log(`teams inbox watcher failed: ${e.message}`); }
+    refreshTeamsFromDisk();
+    refreshInboxPending();
+}
+
+function stopTeamsWatchers(): void {
+    if (teamsConfigWatcher) { try { teamsConfigWatcher.close(); } catch {} teamsConfigWatcher = undefined; }
+    if (teamsTasksWatcher) { try { teamsTasksWatcher.close(); } catch {} teamsTasksWatcher = undefined; }
+    if (teamsInboxWatcher) { try { teamsInboxWatcher.close(); } catch {} teamsInboxWatcher = undefined; }
+    if (teamsRefreshTimer) { clearTimeout(teamsRefreshTimer); teamsRefreshTimer = undefined; }
+    if (inboxRefreshTimer) { clearTimeout(inboxRefreshTimer); inboxRefreshTimer = undefined; }
+}
+
 function readCustomTitle(transcriptPath: string): string | undefined {
     try {
         // Reasonably small read; titles usually appear near the top but can be rewritten
@@ -655,6 +1104,15 @@ function handleHookEvent(data: any) {
         evt.parent_session_id = info.parentSessionId;
         evt.parent_tool_use_id = info.toolUseId;
         evt.is_subagent = true;
+    }
+
+    // Teams hooks (Feb 2026): re-derive teams state from disk on every event.
+    // The forwarder data shape is trusted (per CLAUDE.md §3.5) — we just need
+    // the trigger; the disk is the source of truth.
+    if (evt.hook_event_name === 'TeammateIdle'
+        || evt.hook_event_name === 'TaskCreated'
+        || evt.hook_event_name === 'TaskCompleted') {
+        scheduleTeamsRefresh();
     }
 
     eventBuffer.push(evt);
@@ -735,6 +1193,8 @@ export async function activate(context: vscode.ExtensionContext) {
         const port = await startHookServer(workspace);
         writeDiscovery(workspace, port);
         log(`hook server listening on ${port}`);
+        startTeamsWatchers();
+        log(`teams watchers started (teams=${Object.keys(teamsCache.teams).length})`);
 
         const mediaRoot = vscode.Uri.joinPath(context.extensionUri, 'media');
         panel = vscode.window.createWebviewPanel(
@@ -811,6 +1271,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 sessionUsage: {},
                 promptCosts: [],
                 echartsUri,
+                teams: teamsCache,
             });
             // Background scan with on-disk cache. First load: full read + populate cache.
             // Subsequent loads: only re-read changed files. Then post results to webview.
@@ -883,6 +1344,7 @@ export async function activate(context: vscode.ExtensionContext) {
             if (hotReloadWatchedFile) { fs.unwatchFile(hotReloadWatchedFile); hotReloadWatchedFile = undefined; }
             if (hotReloadTimer) { clearTimeout(hotReloadTimer); hotReloadTimer = undefined; }
             hotReloadRebuild = undefined;
+            stopTeamsWatchers();
             removeDiscovery();
         });
 
@@ -895,6 +1357,39 @@ export async function activate(context: vscode.ExtensionContext) {
                     session_id: msg.session_id,
                     before_ts: msg.before_ts,
                     events,
+                });
+                return;
+            }
+            // team_reply: composer → atomic write to ~/.agents-viz/inbox/{team}/{teammate}/{ts}-{6hex}.json
+            // Hook reader (UserPromptSubmit) consumes the slot on next prompt boundary; we just write.
+            // Frontend accepts msg.text (architect canonical) AND msg.body (frontend draft alias) for compatibility.
+            if (msg?.type === 'team_reply' && msg.team && msg.teammate && (typeof msg.text === 'string' || typeof msg.body === 'string')) {
+                const ts = Date.now();
+                const text = typeof msg.text === 'string' ? msg.text : msg.body;
+                const result = writeInboxMessage(msg.team, msg.teammate, {
+                    ts,
+                    text,
+                    kind: msg.kind || 'request',
+                    from: 'dashboard-user',
+                });
+                // Phase 1 producer: append to dashboard ring on successful write so the
+                // mailbox ribbon shows the outgoing message immediately. (Per team-lead's
+                // §5 phase override: composer is in scope this milestone, not Phase 2.)
+                if (result.ok) {
+                    appendTeamMessage(msg.team, {
+                        ts, from: 'dashboard-user', to: msg.teammate,
+                        text_excerpt: text,   // appendTeamMessage caps at 240ch
+                    });
+                    if (panel) panel.webview.postMessage({ type: 'teams-update', teams: teamsCache });
+                }
+                if (panel) panel.webview.postMessage({
+                    type: 'team_reply_result',
+                    team: msg.team,
+                    teammate: msg.teammate,
+                    ok: result.ok,
+                    path: result.path,
+                    ts,
+                    error: result.error,
                 });
                 return;
             }
@@ -967,6 +1462,7 @@ export async function activate(context: vscode.ExtensionContext) {
         dispose: () => {
             if (server) server.close();
             if (hotReloadWatchedFile) fs.unwatchFile(hotReloadWatchedFile);
+            stopTeamsWatchers();
             removeDiscovery();
         }
     });

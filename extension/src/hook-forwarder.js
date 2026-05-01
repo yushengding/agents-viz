@@ -44,17 +44,28 @@ function debugLog(msg) {
 }
 debugLog('forwarder invoked argv=' + JSON.stringify(process.argv.slice(2)));
 
+// Team-scoped hook events (Claude Code Teams, Feb 2026 experimental). These do NOT
+// carry a per-session `cwd`. Broadcast to ALL live agents-viz panels so any open
+// dashboard can show team coordination state.
+const TEAM_EVENTS = new Set(['TeammateIdle', 'TaskCreated', 'TaskCompleted']);
+
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', c => { input += c; });
 process.stdin.on('end', () => {
   debugLog('stdin end, input.length=' + input.length + ' first120=' + input.slice(0, 120));
-  let cwd;
-  try { cwd = JSON.parse(input).cwd; } catch (e) { debugLog('parse fail: ' + e.message); process.exit(0); }
-  if (!cwd) { debugLog('no cwd in input'); process.exit(0); }
+  let parsed;
+  try { parsed = JSON.parse(input); } catch (e) { debugLog('parse fail: ' + e.message); process.exit(0); }
+  const cwd = parsed.cwd;
+  const eventName = parsed.hook_event_name;
+  const isTeamEvent = TEAM_EVENTS.has(eventName);
 
-  const resolvedCwd = normPath(cwd);
-  debugLog('cwd input=' + cwd + ' resolvedCwd=' + resolvedCwd);
+  // Session events need a cwd to route to the right panel. Team events don't —
+  // they broadcast to every alive panel.
+  if (!cwd && !isTeamEvent) { debugLog('no cwd and not team event, exit'); process.exit(0); }
+
+  const resolvedCwd = cwd ? normPath(cwd) : null;
+  debugLog('cwd=' + cwd + ' resolvedCwd=' + resolvedCwd + ' event=' + eventName + ' team=' + isTeamEvent);
 
   let allFiles;
   try {
@@ -73,6 +84,12 @@ process.stdin.on('end', () => {
       continue;
     }
 
+    if (isTeamEvent) {
+      // Broadcast: every alive panel gets the event.
+      matches.push({ d, file, wsLen: 0 });
+      continue;
+    }
+
     const ws = normPath(d.workspace);
     const m = resolvedCwd === ws || resolvedCwd.startsWith(ws + path.sep);
     debugLog('  probe ws=' + ws + ' match=' + m);
@@ -83,10 +100,16 @@ process.stdin.on('end', () => {
 
   if (!matches.length) { debugLog('NO MATCH, exit'); process.exit(0); }
 
-  // Longest-match wins: most specific workspace first
-  matches.sort((a, b) => b.wsLen - a.wsLen);
-  const bestLen = matches[0].wsLen;
-  const targets = matches.filter(m => m.wsLen === bestLen);
+  let targets;
+  if (isTeamEvent) {
+    // All alive panels (no longest-match filtering)
+    targets = matches;
+  } else {
+    // Longest-match wins: most specific workspace first
+    matches.sort((a, b) => b.wsLen - a.wsLen);
+    const bestLen = matches[0].wsLen;
+    targets = matches.filter(m => m.wsLen === bestLen);
+  }
 
   let pending = targets.length;
   for (const { d } of targets) {

@@ -26,10 +26,12 @@ async function main() {
     await ctx.rebuild();
     console.log('[build] extension.js written');
 
-    // Copy hook forwarder to dist/ so it can be installed to ~/.agents-viz/
+    // Copy hook forwarder + inbox reader to dist/ so they can be installed
+    // to ~/.claude/settings.json from a stable absolute path.
     fs.mkdirSync('dist/hooks', { recursive: true });
     fs.copyFileSync('src/hook-forwarder.js', 'dist/hooks/hook-forwarder.js');
-    console.log('[build] hook forwarder copied');
+    fs.copyFileSync('src/inbox-reader-hook.js', 'dist/hooks/inbox-reader-hook.js');
+    console.log('[build] hook forwarder + inbox reader copied');
 
     // Note: webview.html is NOT bundled — it's read at runtime from extension/webview.html
     // This enables hot-reload without extension host restart. esbuild build doesn't touch it.

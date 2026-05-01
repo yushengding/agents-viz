@@ -74,6 +74,9 @@ extension/media/characters-generated/
 .DS_Store
 Thumbs.db
 
+# Local video / screencast working dir (multi-GB)
+video/
+
 # Editor
 .vscode/launch.json
 .vscode/.copilot*

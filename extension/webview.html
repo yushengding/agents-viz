@@ -1769,6 +1769,460 @@
       font-size: 10px; color: #6a7a92;
       font-style: italic;
     }
+
+    /* ===== TEAMS (Claude Code agent-teams visualization) =====
+       All classes prefixed with `team-` per TEAMS_DESIGN.md §4.1.
+       NEVER share ::before/::after across team modifier classes — every state
+       gets its own DOM subtree (per CLAUDE.md §3.1 / pod-cell precedent). */
+
+    /* Sidebar — TEAMS section header (collapsible "TEAMS (n)" wrapper) */
+    .team-section {
+      border-bottom: 1px solid var(--vscode-panel-border);
+      padding-bottom: 4px;
+    }
+    .team-section-header {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 12px;
+      font-size: 10px; font-weight: 600;
+      letter-spacing: 0.6px; text-transform: uppercase;
+      opacity: 0.7;
+      cursor: pointer; user-select: none;
+      background: rgba(255,255,255,0.02);
+    }
+    .team-section-header:hover { background: rgba(255,255,255,0.05); }
+    .team-section-toggle {
+      display: inline-block; font-size: 9px;
+      transition: transform 0.18s ease;
+      width: 10px;
+    }
+    .team-section.collapsed .team-section-toggle { transform: rotate(-90deg); }
+    .team-section.collapsed .team-section-body { display: none; }
+    .team-section-count {
+      margin-left: auto; opacity: 0.6;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Per-team row container — accent color from name hash (set inline as --team-accent-h) */
+    .team-row {
+      --team-accent-h: 200;
+      --team-accent: hsl(var(--team-accent-h), 65%, 55%);
+      --team-accent-dim: hsl(var(--team-accent-h), 35%, 35%);
+      --team-accent-soft: hsla(var(--team-accent-h), 50%, 55%, 0.10);
+      border-left: 4px solid var(--team-accent);
+      margin: 4px 0;
+      background: var(--team-accent-soft);
+    }
+    .team-row.lifecycle-idle      { opacity: 0.78; }
+    .team-row.lifecycle-archived  { opacity: 0.5; }
+    .team-row-header {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 10px;
+      cursor: pointer; user-select: none;
+      font-size: 11px;
+    }
+    .team-row-header:hover { background: rgba(255,255,255,0.05); }
+    .team-row-toggle {
+      display: inline-block; font-size: 9px;
+      transition: transform 0.18s ease;
+      width: 10px;
+    }
+    .team-row.collapsed .team-row-toggle { transform: rotate(-90deg); }
+    .team-row.collapsed .team-row-body { display: none; }
+    .team-row-name {
+      font-weight: 600; color: var(--team-accent);
+      flex-shrink: 0;
+    }
+    .team-row-mates-count {
+      opacity: 0.55; font-size: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+    .team-row-cost {
+      margin-left: auto;
+      color: #ffe27a; font-family: monospace; font-size: 10px;
+      opacity: 0.85;
+    }
+    .team-row-meta {
+      padding: 2px 12px 6px 12px;
+      font-size: 10px; opacity: 0.65;
+      display: flex; gap: 10px;
+      flex-wrap: wrap;
+    }
+    .team-row-meta-item { white-space: nowrap; }
+    .team-row-mates {
+      /* container for teammate session cards — they keep existing .session styling */
+    }
+
+    /* Cost bar — per-teammate stacked bar showing share of team cost (TEAMS_DESIGN §3e) */
+    .team-cost-bar {
+      display: flex; height: 6px;
+      margin: 0 12px 6px 12px;
+      border-radius: 3px; overflow: hidden;
+      background: rgba(255,255,255,0.05);
+    }
+    .team-cost-bar-segment {
+      height: 100%;
+      transition: opacity 0.15s;
+    }
+    .team-cost-bar-segment:hover { opacity: 0.7; }
+
+    /* Team-row action buttons (View tasks / Open mailbox) */
+    .team-row-actions {
+      display: flex; gap: 6px;
+      padding: 0 12px 8px 12px;
+    }
+    .team-row-actions button {
+      flex: 1;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.10);
+      color: var(--vscode-foreground);
+      font-size: 10px;
+      padding: 4px 6px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .team-row-actions button:hover {
+      background: var(--team-accent-soft);
+      border-color: var(--team-accent-dim);
+    }
+    .team-row-actions button.active {
+      background: var(--team-accent-soft);
+      border-color: var(--team-accent);
+      color: var(--team-accent);
+    }
+
+    /* Teammate-card wrapper — the existing .session card sits inside, plus a state overlay */
+    .team-mate-card {
+      position: relative;
+    }
+    /* ✉ icon for "reply" entry-point on each teammate card (TEAMS_DESIGN §8b Q2) */
+    .team-mate-card .team-mate-reply-btn {
+      position: absolute;
+      top: 6px; right: 38px;   /* sits next to existing gear-btn at right:8 */
+      width: 22px; height: 22px;
+      display: flex; align-items: center; justify-content: center;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      cursor: pointer;
+      opacity: 0;
+      font-size: 13px;
+      transition: opacity 0.15s, background 0.15s;
+      z-index: 5;
+    }
+    .team-mate-card:hover .team-mate-reply-btn { opacity: 0.7; }
+    .team-mate-card .team-mate-reply-btn:hover {
+      opacity: 1; background: var(--team-accent-soft); border-color: var(--team-accent-dim);
+    }
+
+    /* Three teammate-state overlays — separate child subtrees, NOT shared ::before
+       (TEAMS_DESIGN §4.2; cross-ref CLAUDE.md §3.1 / ARCHITECTURE.md §6 antipattern 1) */
+    .team-mate-state-overlay {
+      position: absolute;
+      bottom: 6px; right: 8px;
+      pointer-events: none;
+      z-index: 4;
+    }
+    .team-mate-working {
+      display: flex; align-items: center; gap: 4px;
+      padding: 2px 6px;
+      background: rgba(86,156,214,0.18);
+      border: 1px solid rgba(86,156,214,0.45);
+      border-radius: 10px;
+      font-size: 9px; color: #9CDCFE;
+    }
+    .team-mate-working .twm-pulse-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #569CD6;
+      animation: twmPulse 1.2s ease-in-out infinite;
+    }
+    @keyframes twmPulse {
+      0%, 100% { opacity: 0.45; transform: scale(1); }
+      50%      { opacity: 1.0;  transform: scale(1.25); }
+    }
+    .team-mate-idle {
+      display: flex; align-items: center; gap: 4px;
+      padding: 2px 6px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 10px;
+      font-size: 9px; opacity: 0.55;
+    }
+    /* shutdown_pending state removed per TEAMS_DESIGN.md §8c (2026-04-30): not in
+       the canonical 5-state lifecycle. Lifecycle states init/active/idle/archived/deleted
+       live on .team-row.lifecycle-X (architect-derived). Per-mate state stays working/idle. */
+
+    /* Outstanding-prompt indicator — pulsing border on cards with unread inbox/prompt
+       (single class, no shared ::before — adds an outline only, §3.1 safe) */
+    .team-mate-card.has-outstanding-prompt {
+      box-shadow: inset 3px 0 0 #F48771, 0 0 8px rgba(244,135,113,0.30);
+      animation: outstandingPulse 2.4s ease-in-out infinite;
+    }
+    @keyframes outstandingPulse {
+      0%, 100% { box-shadow: inset 3px 0 0 #F48771, 0 0 4px rgba(244,135,113,0.20); }
+      50%      { box-shadow: inset 3px 0 0 #F48771, 0 0 12px rgba(244,135,113,0.45); }
+    }
+
+    /* Mailbox panel — popover with SVG graph (collapsible, opens via [✉ open mailbox] button) */
+    .team-mailbox-panel {
+      margin: 4px 12px 8px 12px;
+      padding: 8px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 4px;
+    }
+    .team-mailbox-panel-header {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 10px; opacity: 0.7;
+      margin-bottom: 4px;
+    }
+    .team-mailbox-svg {
+      width: 100%; height: 200px;
+      display: block;
+    }
+    .team-mailbox-empty {
+      text-align: center;
+      font-size: 10px; opacity: 0.5;
+      padding: 24px 8px;
+      font-style: italic;
+    }
+    .team-mailbox-node circle {
+      fill: var(--team-accent-soft, rgba(106,255,180,0.18));
+      stroke: var(--team-accent, #6affb4);
+      stroke-width: 1.5;
+      cursor: pointer;
+      transition: fill 0.15s;
+    }
+    .team-mailbox-node:hover circle { fill: var(--team-accent, #6affb4); }
+    .team-mailbox-node text {
+      fill: var(--vscode-foreground);
+      font-size: 10px;
+      text-anchor: middle;
+      pointer-events: none;
+      user-select: none;
+    }
+    .team-mailbox-edge {
+      fill: none;
+      stroke-linecap: round;
+      pointer-events: none;
+    }
+    .team-mailbox-edge.recent {
+      filter: drop-shadow(0 0 3px var(--team-accent, #DCDCAA));
+      animation: edgePulse 2s ease-in-out infinite;
+    }
+    @keyframes edgePulse {
+      0%, 100% { filter: drop-shadow(0 0 3px var(--team-accent, #DCDCAA)); }
+      50%      { filter: drop-shadow(0 0 6px var(--team-accent, #DCDCAA)); }
+    }
+
+    /* Tasks panel — summary chips per TEAMS_DESIGN.md §8c (kanban dropped from v1).
+       TEAMS payload only carries tasks_summary counts; full task bodies live in
+       ~/.claude/tasks/{team}/*.json — surfaced via copy-able path hint. */
+    .team-tasks-panel {
+      margin: 4px 12px 8px 12px;
+      padding: 8px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 4px;
+    }
+    .team-tasks-panel-header {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 10px; opacity: 0.7;
+      margin-bottom: 6px;
+    }
+    .ttsum-chips {
+      display: flex; gap: 6px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+    .ttsum-chip {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 3px 7px;
+      border-radius: 10px;
+      font-size: 11px; font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .ttsum-chip .ttsum-label {
+      font-size: 9px; opacity: 0.7; font-weight: normal;
+      margin-left: 2px;
+    }
+    .ttsum-completed   { background: rgba(106,255,180,0.14); color: #6affb4; }
+    .ttsum-in-progress { background: rgba(86,156,214,0.14);  color: #9CDCFE; }
+    .ttsum-pending     { background: rgba(244,135,113,0.14); color: #F48771; }
+    .ttsum-bar {
+      display: flex; height: 5px;
+      margin-bottom: 8px;
+      border-radius: 3px; overflow: hidden;
+      background: rgba(255,255,255,0.04);
+    }
+    .ttsum-bar.ttsum-empty {
+      background: rgba(255,255,255,0.04);
+      opacity: 0.4;
+    }
+    .ttsum-seg { height: 100%; transition: opacity 0.15s; }
+    .ttsum-seg:hover { opacity: 0.75; }
+    .ttsum-hint {
+      font-size: 10px; opacity: 0.55;
+      display: flex; align-items: center; gap: 4px;
+      flex-wrap: wrap;
+    }
+    .ttsum-hint-label { opacity: 0.7; }
+    .ttsum-path {
+      font-family: monospace; font-size: 10px;
+      background: rgba(255,255,255,0.05);
+      padding: 1px 5px;
+      border-radius: 2px;
+      cursor: pointer;
+      user-select: all;
+    }
+    .ttsum-path:hover { background: rgba(255,255,255,0.10); }
+
+    /* Kanban columns — used when architect ships full `tasks` array (schema v2+).
+       Renders below the summary chip strip. Per CLAUDE.md §3.1: card variants
+       are status attributes on the SAME element, not a chain of pseudo-elements. */
+    .team-tasks-board {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .team-task-col {
+      background: rgba(255,255,255,0.03);
+      border-radius: 3px;
+      padding: 4px;
+      min-height: 60px;
+    }
+    .team-task-col-header {
+      font-size: 9px; opacity: 0.6;
+      padding: 2px 4px;
+      display: flex; justify-content: space-between;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+    .team-task-col-list {
+      display: flex; flex-direction: column;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .team-task-card {
+      background: rgba(255,255,255,0.05);
+      border-left: 2px solid #DCDCAA;
+      padding: 4px 6px;
+      border-radius: 2px;
+      font-size: 10px;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .team-task-card:hover { background: rgba(255,255,255,0.10); }
+    .team-task-card[data-status="completed"]   { border-left-color: #6affb4; opacity: 0.7; }
+    .team-task-card[data-status="in_progress"] { border-left-color: #569CD6; }
+    .team-task-card[data-status="pending"]     { border-left-color: #F48771; }
+    .team-task-card .ttc-subject {
+      display: block;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .team-task-card .ttc-meta {
+      display: block;
+      font-size: 9px; opacity: 0.55;
+      margin-top: 2px;
+    }
+    .team-task-card .ttc-blocked {
+      display: block;
+      font-size: 9px; color: #F48771; opacity: 0.7;
+      margin-top: 2px;
+    }
+    .team-task-card .ttc-blocked-pill {
+      display: inline-block;
+      padding: 0 3px; margin-right: 2px;
+      background: rgba(244,135,113,0.15);
+      border-radius: 2px;
+    }
+    .team-task-card .ttc-blocked-pill.done {
+      background: rgba(106,255,180,0.15);
+      color: #6affb4;
+      opacity: 0.7;
+    }
+
+    /* Reply composer modal — clones .modal-overlay/.modal pattern (lines 108-162) */
+    #reply-modal .modal { min-width: 440px; max-width: 560px; }
+    #reply-modal .reply-meta {
+      font-size: 11px; opacity: 0.6;
+      margin: 4px 0;
+      font-family: monospace;
+    }
+    #reply-modal .reply-target {
+      font-weight: 600;
+      color: var(--team-accent, #569CD6);
+    }
+    #reply-modal #reply-text {
+      width: 100%; box-sizing: border-box;
+      padding: 8px;
+      font-family: monospace; font-size: 12px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--vscode-panel-border);
+      color: var(--vscode-foreground);
+      border-radius: 3px;
+      resize: vertical;
+      min-height: 100px;
+      outline: none;
+    }
+    #reply-modal #reply-text:focus { border-color: rgba(86,156,214,0.6); }
+    #reply-modal .reply-kind-row {
+      display: flex; gap: 6px;
+      margin-top: 8px;
+      align-items: center;
+      font-size: 11px;
+    }
+    #reply-modal .reply-kind-row label {
+      display: flex; align-items: center; gap: 3px;
+      cursor: pointer;
+      margin: 0; padding: 2px 6px;
+      border-radius: 3px;
+      opacity: 0.75;
+    }
+    #reply-modal .reply-kind-row label:hover { background: rgba(255,255,255,0.05); }
+    #reply-modal .reply-kind-row input[type=radio] { margin: 0; }
+    #reply-modal .reply-result {
+      margin-top: 8px;
+      padding: 6px 8px;
+      font-size: 11px; font-family: monospace;
+      border-radius: 3px;
+      display: none;
+    }
+    #reply-modal .reply-result.success {
+      background: rgba(106,255,180,0.10);
+      color: #6affb4;
+      display: block;
+    }
+    #reply-modal .reply-result.error {
+      background: rgba(244,135,113,0.12);
+      color: #F48771;
+      display: block;
+    }
+    #reply-modal .modal-buttons button.primary {
+      background: #569CD6; border-color: #569CD6; color: #fff;
+    }
+    #reply-modal .modal-buttons button.primary:hover { background: #6CA8E0; }
+
+    /* Floor-plan ribbon overlay SVG — coexists with subagent connections SVG.
+       Uses a separate z-index and its own class so the two layers don't fight. */
+    .team-ribbon-layer {
+      position: absolute; left: 0; top: 0;
+      pointer-events: none;
+      z-index: 2;       /* subagent connections sit at z-index:1 */
+    }
+    .team-ribbon-arc {
+      fill: none;
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      opacity: 0.55;
+    }
+    .team-ribbon-hull {
+      fill-opacity: 0.08;
+      stroke-width: 1.5;
+      stroke-linejoin: round;
+    }
+    /* ===== END TEAMS ===== */
   </style>
   <!-- ECharts loaded from extension/media/vendor/. Empty src in standalone preview
        (export_webview_preview falls back to a CDN injection); webview.ts swaps
@@ -1895,6 +2349,30 @@
     </div>
   </div>
 
+  <!-- Reply composer modal — writes to ~/.agents-viz/inbox/{team}/{teammate}/{ts}.json
+       (per-message file, atomic .tmp+rename) via vscode.postMessage({type:'team_reply'})
+       → extension.ts. Per TEAMS_DECISIONS.md §4 hooks-devops locked schema.
+       Per CLAUDE.md §3.1, this is its own DOM subtree (does not share styles
+       with #delete-modal beyond the .modal-overlay shell). -->
+  <div class="modal-overlay" id="reply-modal">
+    <div class="modal">
+      <h3>✉ Reply to <span id="reply-target" class="reply-target">teammate</span></h3>
+      <p class="reply-meta" id="reply-meta">team: — · path: —</p>
+      <textarea id="reply-text" rows="6" placeholder="Type your message... it will be injected into the teammate's next prompt by the UserPromptSubmit hook."></textarea>
+      <div class="reply-kind-row">
+        <span style="opacity:0.65">kind:</span>
+        <label><input type="radio" name="reply-kind" value="request" checked> request</label>
+        <label><input type="radio" name="reply-kind" value="note"> note</label>
+        <label><input type="radio" name="reply-kind" value="urgent"> urgent</label>
+      </div>
+      <div class="reply-result" id="reply-result"></div>
+      <div class="modal-buttons">
+        <button id="reply-cancel">Cancel</button>
+        <button id="reply-send" class="primary">Send →</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const vscode = acquireVsCodeApi();
     const SPRITES = __SPRITE_URIS__;
@@ -1948,6 +2426,13 @@
     // that wipes the whole panel. typeof is the standard safe-existence guard.
     const SESSION_USAGE = (typeof __SESSION_USAGE__ !== 'undefined') ? __SESSION_USAGE__ : {};
     const PROMPT_COSTS  = (typeof __PROMPT_COSTS__  !== 'undefined') ? __PROMPT_COSTS__  : [];
+    // Claude Code Teams (Feb 2026 experimental). Shape per architect TEAMS_DESIGN.md:
+    //   Record<teamName, { config: TeamConfig | null, tasks: Record<id, Task>, lastUpdated: number }>
+    // typeof guard per CLAUDE.md §3.6 — preview HTML and stale extension builds may
+    // leave the placeholder unsubstituted; the guard prevents a panel-wiping ReferenceError.
+    const TEAMS = (typeof __TEAMS__ !== 'undefined') ? __TEAMS__ : {};
+    const TEAM_IDLE_MS = 30 * 60 * 1000;          // 30min — teammate considered idle (TEAMS_DESIGN §5)
+    const TEAM_ARCHIVE_MS = 24 * 60 * 60 * 1000;  // 24h — team becomes archived (TEAMS_DECISIONS §3)
     const STRIP_LEN = 24;  /* 24 cells; bin width auto-scales with timeline span */
     const ONE_HOUR_MS = 60 * 60 * 1000;
 
@@ -2158,6 +2643,9 @@
       if (!q) return true;
       if (sid.toLowerCase().includes(q)) return true;
       if (meta.title && meta.title.toLowerCase().includes(q)) return true;
+      const dn = displayNameFor(sid, meta);
+      if (dn && dn.toLowerCase().includes(q)) return true;
+      if (meta.teamName && meta.teamName.toLowerCase().includes(q)) return true;
       if (meta.cwd && meta.cwd.toLowerCase().includes(q)) return true;
       const proj = sessionProject(meta);
       if (proj && proj.toLowerCase().includes(q)) return true;
@@ -2173,12 +2661,22 @@
     }
 
     /** Pick a session's room key.
+     *  - If session belongs to a team, all teammates share one room: the team's
+     *    aggregated home project (or a synthetic '__team:<name>__' key when no
+     *    file votes exist). See teamHomeProject().
      *  - If file/cwd votes are spread across 2+ projects (runner-up >= 30% of leader),
      *    return '__cross__' (caller routes to 📁 projects hub).
      *  - Otherwise return the leader's project name.
      *  - Falls back to current cwd's projectName when no votes exist. */
     function sessionProject(meta) {
       if (!meta) return '(no cwd)';
+      // Team membership wins over individual file-op vote: by user requirement,
+      // all members of a team are co-located in one room. Computed home project
+      // is cached on meta.teamHomeProjectCached and refreshed when team changes.
+      if (meta.teamName) {
+        const home = teamHomeProjectFor(meta.teamName);
+        if (home) return home;
+      }
       if (meta.dominantProject) return meta.dominantProject;
       if (meta.cwdFreq && meta.cwdFreq.size > 0) {
         const sorted = [...meta.cwdFreq.entries()].sort((a, b) => b[1] - a[1]);
@@ -2196,13 +2694,25 @@
     function buildCharPopoverHtml({ name, sid, lastPrompt, meta }) {
       const decision = sessionProject(meta);
       const isCross = decision === '__cross__';
+      const isTeamRoom = typeof decision === 'string' && decision.indexOf('__team:') === 0;
       const isHub = isCross || decision === '~';
-      const verdictCls = isCross ? 'cross' : (isHub ? 'hub' : 'routed');
+      const verdictCls = isCross ? 'cross' : (isHub ? 'hub' : (isTeamRoom ? 'team' : 'routed'));
       let verdictText;
-      if (isCross) {
-        const sorted = [...meta.cwdFreq.entries()].sort((a, b) => b[1] - a[1]);
-        const ratio = (sorted[1][1] / sorted[0][1]).toFixed(2);
-        verdictText = '📁 cross-project hub · runner-up/leader ' + ratio + ' ≥ 0.30';
+      if (meta && meta.teamName) {
+        // Teammate routing always wins over individual votes — explain it as such.
+        if (isTeamRoom) {
+          verdictText = '👥 ' + meta.teamName + ' · no shared project yet — clustered by team';
+        } else if (isCross) {
+          verdictText = '👥 ' + meta.teamName + ' · cross-project (member files spread, routed to hub)';
+        } else {
+          verdictText = '👥 ' + meta.teamName + ' → 🏠 ' + decision;
+        }
+      } else if (isCross) {
+        const sorted = (meta && meta.cwdFreq && meta.cwdFreq.size >= 2)
+          ? [...meta.cwdFreq.entries()].sort((a, b) => b[1] - a[1]) : null;
+        verdictText = sorted
+          ? '📁 cross-project hub · runner-up/leader ' + (sorted[1][1] / sorted[0][1]).toFixed(2) + ' ≥ 0.30'
+          : '📁 cross-project hub';
       } else if (decision === '~') {
         verdictText = '📁 projects hub (workspace root, no clear project)';
       } else if (decision === '(no cwd)' || decision === '(pending)') {
@@ -2721,8 +3231,16 @@
       // Include any orphan subagents at bottom
       for (const s of sids) if (!orderedSids.includes(s)) orderedSids.push(s);
 
-      // Build the desired set of visible sids (respect hideOld filter + search)
+      // Build the desired set of visible sids (respect hideOld filter + search).
+      // Sessions belonging to a team are rendered inside the TEAMS section instead
+      // of the flat list, so we exclude their sids here. (See renderTeamsSection.)
       const searchQ = (state.searchQuery || '').trim().toLowerCase();
+      const teamSids = new Set();
+      for (const team of Object.values(teamsMap())) {
+        for (const m of teamMembersOf(team)) {
+          for (const s of memberSessionIds(m)) teamSids.add(s);
+        }
+      }
       const visibleSids = [];
       for (const sid of orderedSids) {
         const meta = sessionMeta.get(sid) || {};
@@ -2733,6 +3251,7 @@
         // These produce ghost "projects" cards that vanish on refresh.
         if (!meta.title && projectName(meta.cwd) === '(pending)') continue;
         if (searchQ && !sessionMatchesSearch(sid, meta, searchQ)) continue;
+        if (teamSids.has(sid)) continue;          // owned by a team — rendered above by renderTeamsSection
         visibleSids.push(sid);
       }
 
@@ -2744,12 +3263,14 @@
         }
       }
 
-      // Upsert cards; preserve order
-      let prevNode = null;
+      // Upsert cards; preserve order. Teams section (if present) stays as the
+      // FIRST child of #sessions, so we anchor solo-session cards after it.
+      const teamsHost = container.querySelector('#teams-section-host');
+      let prevNode = teamsHost || null;
       for (const sid of visibleSids) {
         const meta = sessionMeta.get(sid) || {};
         const stateCls = meta.monitoring ? 'monitoring' : meta.waiting ? 'waiting' : (meta.busy ? 'busy' : 'idle');
-        const title = meta.title || sessionProject(meta);
+        const title = displayNameFor(sid, meta);
         const subtitle = sid.slice(0, 8) + ' · ' + sessionProject(meta);
         const statusTxt = meta.monitoring
           ? 'monitoring bg shell…'
@@ -3012,7 +3533,16 @@
       const plan = document.getElementById('floor-plan');
       if (!plan) return;
       sweepZombieStates();
-      const sids = Array.from(bySession.keys());
+      // Floor-plan population sources:
+      //   1. bySession.keys() — real Claude Code sessions discovered via JSONL.
+      //   2. sessionMeta entries flagged isTeammate — synthetic teammates created
+      //      by materializeTeamAvatars() for in-process Teams members that share
+      //      the lead's transcript and have no separate JSONL of their own.
+      const sidSet = new Set(bySession.keys());
+      for (const [sid, meta] of sessionMeta.entries()) {
+        if (meta && meta.isTeammate) sidSet.add(sid);
+      }
+      const sids = Array.from(sidSet);
       if (sids.length === 0) {
         plan.innerHTML = '<div class="floor-plan-empty empty"><p>Waiting for Claude Code sessions.</p>' +
           '<p>Run <code>Agents Viz: Configure Claude Code Hooks</code><br>from the command palette, then start a Claude Code session.</p></div>';
@@ -3162,7 +3692,12 @@
         // Project title sets a lower bound on room width — whiteboard must fit it
         // without ellipsis. Rough: 8px per char at 13px bold + 60px for whiteboard
         // padding + wall border + room border. Use longest line ('☕ Lounge' for lounge).
-        const _projLabel = isLounge ? '☕ Lounge' : key;
+        const teamRoomMatch = !isLounge && typeof key === 'string' && key.indexOf('__team:') === 0
+          ? key.slice('__team:'.length, -2)
+          : null;
+        const _projLabel = isLounge ? '☕ Lounge'
+                         : teamRoomMatch ? ('👥 ' + teamRoomMatch)
+                         : key;
         const titleMinW = _projLabel.length * 8 + 60;
         const finalW = Math.max(180, titleMinW, Math.min(1100, roomW));
         const finalH = Math.max(200, Math.min(680, roomH));
@@ -3184,12 +3719,18 @@
             'linear-gradient(135deg, hsl(' + h + ', 45%, 28%), hsl(' + ((h + 40) % 360) + ', 50%, 15%))';
         }
         const isHub = key === PROJECTS_HUB;
-        const projectLabel = isLounge ? '☕ Lounge' : isHub ? '📁 projects' : key;
+        const isTeamRoom = !!teamRoomMatch;
+        const projectLabel = isLounge ? '☕ Lounge'
+                           : isHub ? '📁 projects'
+                           : isTeamRoom ? ('👥 ' + teamRoomMatch)
+                           : key;
         const sampleCwd = isLounge
           ? chars.length + ' idle agents'
           : isHub
             ? chars.length + ' workspace-root sessions'
-            : displayCwd(chars[0].meta.cwd || '');
+            : isTeamRoom
+              ? chars.length + ' teammates · no shared project yet'
+              : displayCwd(chars[0].meta.cwd || '');
         // Room-level total: sum of all sessions' lifetime cost (incl. ones we've seen).
         // TODO: persist deleted-session contributions in extension-side storage so the
         // tally survives session deletion / panel reopen.
@@ -3244,7 +3785,7 @@
           const age = Date.now() - (meta.lastTs || 0);
           const stale = age > STALE_MS;
           const longStale = age > LONG_STALE_MS;
-          const name = meta.title || sid.slice(0, 8);
+          const name = displayNameFor(sid, meta);
           // Common: last user prompt for hover preview
           const evts = bySession.get(sid) || [];
           let lastPrompt = '';
@@ -3389,7 +3930,7 @@
       }
       const meta = sessionMeta.get(sid) || {};
       const events = bySession.get(sid).filter(e => filters.has(e.hook_event_name || ''));
-      const titleText = meta.title || sessionProject(meta);
+      const titleText = displayNameFor(sid, meta);
       if (drawerTitle) drawerTitle.textContent = titleText;
       if (drawerSub) drawerSub.textContent = sid.slice(0, 8) + ' · ' + displayCwd(meta.cwd || '') +
         ' · ' + events.length + '/' + bySession.get(sid).length + ' events';
@@ -3529,8 +4070,875 @@
       wrap.scrollTop = wrap.scrollHeight;
     }
 
-    function renderAll() { renderSidebar(); renderFloorPlan(); renderTimeline(); }
-    function renderAllThrottled() { renderSidebarThrottled(); renderFloorPlan(); renderTimeline(); }
+    // ─── TEAMS rendering (Claude Code agent-teams visualization) ───
+    // TEAMS_DESIGN.md + TEAMS_DECISIONS.md §1 are authoritative.
+    //
+    // Schema accessors — handle both architect's v2 wrapper shape
+    //   TEAMS = { version, teams: Record<name, TeamEntry>, messages: Record<name, []> }
+    // and the older flat shape Record<name, TeamState> for backward-compat. All
+    // team access in this file MUST go through these to insulate the renderer
+    // from schema migrations.
+    function teamsMap() {
+      if (!TEAMS) return {};
+      // v2 wrapper
+      if (TEAMS.teams && typeof TEAMS.teams === 'object') return TEAMS.teams;
+      // v0/v1 flat shape (each value has a `config` field directly)
+      return TEAMS;
+    }
+    function teamMembersOf(team) {
+      if (!team) return [];
+      // v2 (members directly on entry)
+      if (Array.isArray(team.members)) return team.members;
+      // v0/v1 (members nested under config)
+      if (team.config && Array.isArray(team.config.members)) return team.config.members;
+      return [];
+    }
+    function memberSessionIds(member) {
+      if (!member) return [];
+      if (Array.isArray(member.sessionIds)) return member.sessionIds;
+      if (Array.isArray(member.session_ids)) return member.session_ids;
+      if (typeof member.session_id === 'string' && member.session_id) return [member.session_id];
+      return [];
+    }
+    const teamCardsByMate = new Map();   // "team::mate" -> wrapper DOM node, preserved across renders
+    if (!state.teamsExpanded) state.teamsExpanded = {};
+    if (!state.teamsSectionCollapsed) state.teamsSectionCollapsed = false;
+    if (!state.teamsActivePanel) state.teamsActivePanel = {}; // teamId -> 'mailbox' | 'tasks' | null
+
+    /** Compute lifecycle state per TEAMS_DECISIONS.md §3 — derived projection only. */
+    function deriveTeamLifecycle(team) {
+      const cfg = team && team.config;
+      if (!cfg) return 'init';
+      const now = Date.now();
+      const members = (cfg.members || []);
+      // Latest activity = most recent lastTs across all member sessions
+      let latestActivity = 0;
+      for (const m of members) {
+        for (const sid of (memberSessionIds(m))) {
+          const meta = sessionMeta.get(sid);
+          if (meta && meta.lastTs && meta.lastTs > latestActivity) latestActivity = meta.lastTs;
+        }
+      }
+      // Tasks present? Used to distinguish active-quiet from idle-with-pending-work.
+      const tasks = team.tasks ? Object.values(team.tasks) : [];
+      const hasInflight = tasks.some(t => t && (t.status === 'in_progress' || t.status === 'pending'));
+      if (latestActivity === 0 && !hasInflight) return 'init';
+      const sinceMs = now - latestActivity;
+      if (sinceMs < TEAM_IDLE_MS) return 'active';
+      if (sinceMs < TEAM_ARCHIVE_MS) return hasInflight ? 'idle' : 'idle';
+      return 'archived';
+    }
+
+    /** Pure: compute one teammate's visual state — 'working' | 'idle'. */
+    function deriveMateState(member) {
+      const sids = memberSessionIds(member);
+      let mostRecentMeta = null;
+      for (const sid of sids) {
+        const meta = sessionMeta.get(sid);
+        if (!meta) continue;
+        if (!mostRecentMeta || (meta.lastTs || 0) > (mostRecentMeta.lastTs || 0)) mostRecentMeta = meta;
+      }
+      if (!mostRecentMeta) return { state: 'idle', meta: null, sid: sids[0] || null };
+      const sinceMs = Date.now() - (mostRecentMeta.lastTs || 0);
+      if (sinceMs < TEAM_IDLE_MS && (mostRecentMeta.busy || mostRecentMeta.waiting || mostRecentMeta.monitoring)) {
+        return { state: 'working', meta: mostRecentMeta, sid: sids.find(s => sessionMeta.get(s) === mostRecentMeta) };
+      }
+      return { state: 'idle', meta: mostRecentMeta, sid: sids.find(s => sessionMeta.get(s) === mostRecentMeta) };
+    }
+
+    /** Aggregate cost/tokens for a teammate by summing SESSION_USAGE over their sessionIds. */
+    function aggregateMateCost(member) {
+      const sids = memberSessionIds(member);
+      let cost = 0, tokens = 0;
+      for (const sid of sids) {
+        const u = SESSION_USAGE[sid];
+        if (!u) continue;
+        cost += u.cost || 0;
+        tokens += (u.input || 0) + (u.output || 0) + (u.cacheCreate || 0) + (u.cacheRead || 0);
+      }
+      return { cost, tokens };
+    }
+
+    /** Per-team home-project cache (cleared at start of each materializeTeamAvatars
+     *  pass). Keyed by teamName → resolved project room key. */
+    const teamHomeProjectCache = new Map();
+    function teamHomeProjectFor(teamName) {
+      if (!teamName) return null;
+      if (teamHomeProjectCache.has(teamName)) return teamHomeProjectCache.get(teamName);
+      const team = teamsMap()[teamName];
+      if (!team) { teamHomeProjectCache.set(teamName, null); return null; }
+      const members = teamMembersOf(team);
+      // Aggregate file/cwd votes across every real teammate session.
+      const agg = new Map();
+      let leadCwd = null;
+      for (const m of members) {
+        for (const sid of memberSessionIds(m)) {
+          if (sid && sid.indexOf('team-virtual:') === 0) continue;
+          const meta = sessionMeta.get(sid);
+          if (!meta) continue;
+          if (!leadCwd && meta.cwd) leadCwd = meta.cwd;
+          if (meta.cwdFreq && meta.cwdFreq.size > 0) {
+            for (const [k, v] of meta.cwdFreq) agg.set(k, (agg.get(k) || 0) + v);
+          }
+        }
+      }
+      let result = null;
+      if (agg.size > 0) {
+        const sorted = [...agg.entries()].sort((a, b) => b[1] - a[1]);
+        if (sorted.length >= 2 && sorted[1][1] / sorted[0][1] >= 0.3) {
+          result = '__cross__';
+        } else {
+          result = sorted[0][0];
+        }
+      } else if (leadCwd) {
+        const p = projectName(leadCwd);
+        result = (p && p !== '~' && p !== '(no cwd)' && p !== '(pending)') ? p : ('__team:' + teamName + '__');
+      } else {
+        // No real session info anywhere → cluster all members under a synthetic
+        // team-only room so they still share one room (per user requirement).
+        result = '__team:' + teamName + '__';
+      }
+      teamHomeProjectCache.set(teamName, result);
+      return result;
+    }
+
+    /** xxx-teams-yyy: when meta is a teammate, render display name as
+     *  `<teamName>-<teammateName>`. Otherwise fall through to the existing
+     *  meta.title || sid-prefix pattern. */
+    function displayNameFor(sid, meta) {
+      if (meta && meta.teamName && meta.teammateName) {
+        return meta.teamName + '-' + meta.teammateName;
+      }
+      if (meta && meta.title) return meta.title;
+      return (sid || '').slice(0, 8);
+    }
+
+    /** Materialize floor-plan avatars for teammates. Two responsibilities:
+     *   1. Tag every real teammate session's meta with `teamName` / `teammateName`
+     *      so sessionProject() routes them to the team's home room and
+     *      displayNameFor() renders the xxx-teams-yyy label.
+     *   2. Synthesize a virtual sessionMeta entry for in-process teammates that
+     *      have no discovered JSONL (the lead's transcript is shared), keyed
+     *      `team-virtual:{team}:{name}`. The synth meta carries the same
+     *      teamName tag so it routes alongside its siblings.
+     *  Idempotent across re-renders. */
+    function materializeTeamAvatars() {
+      teamHomeProjectCache.clear();   // re-derive each pass; team rosters and votes can change
+      for (const [teamName, team] of Object.entries(teamsMap())) {
+        const members = teamMembersOf(team);
+        for (const m of members) {
+          const memberKey = m.name || m.agentId;
+          if (!memberKey) continue;
+          // 1) Tag any real session metas this member already references so
+          //    routing + display pick up the team identity.
+          for (const sid of memberSessionIds(m)) {
+            if (!sid || sid.indexOf('team-virtual:') === 0) continue;
+            const meta = sessionMeta.get(sid);
+            if (!meta) continue;
+            if (!meta.teamName) {            // first-write-wins on dual membership
+              meta.teamName = teamName;
+              meta.teammateName = memberKey;
+              meta.isTeammate = true;
+              meta.dominantProject = null;   // invalidate cached individual-vote winner
+            }
+          }
+          // 2) Synthesize a virtual sprite when no roster sid resolves to a real
+          //    sessionMeta entry yet. Covers two cases: (a) member has no sessionIds
+          //    at all (in-process Teams sharing lead transcript), and (b) member
+          //    has sessionIds in config but those sessions haven't been discovered
+          //    on disk yet (no events flushed).
+          const realSids = memberSessionIds(m).filter(s => s && s.indexOf('team-virtual:') !== 0 && sessionMeta.has(s));
+          if (realSids.length > 0) continue;
+          const synthSid = 'team-virtual:' + teamName + ':' + memberKey;
+          if (!sessionMeta.has(synthSid)) {
+            // Stable hash → charIdx so same teammate keeps same sprite across reloads.
+            let h = 0;
+            for (let i = 0; i < memberKey.length; i++) h = ((h << 5) - h + memberKey.charCodeAt(i)) | 0;
+            sessionMeta.set(synthSid, {
+              cwd: (m.cwd || ''),
+              title: teamName + '-' + memberKey,    // legacy callers reading meta.title get the same display name
+              charIdx: Math.abs(h) % 40,
+              busy: false,
+              waiting: false,
+              lastTs: m.joinedAt || Date.now(),
+              strip: [],
+              isTeammate: true,
+              teamName: teamName,
+              teammateName: memberKey,
+              agentColor: m.color || null,
+            });
+          }
+          // Inject synth sid so memberSessionIds(m) returns it → ribbon anchoring works.
+          if (!Array.isArray(m.sessionIds)) m.sessionIds = [];
+          if (!m.sessionIds.includes(synthSid)) m.sessionIds.push(synthSid);
+        }
+      }
+    }
+
+    /** Outstanding-prompt detection: prefer architect's `pending_inbox` queue depth
+     *  (truth source per hooks-devops); fall back to session.waiting if pending_inbox
+     *  hasn't been wired yet. */
+    function mateHasOutstandingPrompt(member, teamName) {
+      const team = teamsMap()[teamName];
+      const pending = team && team.pending_inbox;
+      if (pending && typeof pending[member.name] === 'number' && pending[member.name] > 0) return true;
+      const sids = memberSessionIds(member);
+      for (const sid of sids) {
+        const meta = sessionMeta.get(sid);
+        if (meta && meta.waiting) return true;
+      }
+      return false;
+    }
+
+    /** Render the entire TEAMS section in the sidebar. Inserts BEFORE the existing
+     *  flat #sessions list. Reuses the existing per-session card cache (sessionCards)
+     *  by relocating cards into team-mate-card wrappers — this keeps sprite
+     *  animations from restarting. */
+    function renderTeamsSection() {
+      const sessionsContainer = document.getElementById('sessions');
+      if (!sessionsContainer) return;
+      // Locate or create the section element (sibling above #sessions inside #sidebar)
+      let section = document.getElementById('teams-section-host');
+      const teamNames = Object.keys(teamsMap());
+      if (teamNames.length === 0) {
+        if (section) section.remove();
+        return;
+      }
+      if (!section) {
+        section = document.createElement('div');
+        section.id = 'teams-section-host';
+        section.className = 'team-section';
+        section.innerHTML =
+          '<div class="team-section-header">' +
+            '<span class="team-section-toggle">▼</span>' +
+            '<span>👥 TEAMS</span>' +
+            '<span class="team-section-count" id="team-section-count">0</span>' +
+          '</div>' +
+          '<div class="team-section-body" id="team-section-body"></div>';
+        // Insert at top of #sessions (which is the scrollable container) so the
+        // teams section scrolls together with the flat session list below it.
+        sessionsContainer.insertBefore(section, sessionsContainer.firstChild);
+        section.querySelector('.team-section-header').addEventListener('click', () => {
+          state.teamsSectionCollapsed = !state.teamsSectionCollapsed;
+          vscode.setState(state);
+          section.classList.toggle('collapsed', state.teamsSectionCollapsed);
+        });
+      }
+      section.classList.toggle('collapsed', !!state.teamsSectionCollapsed);
+      section.querySelector('#team-section-count').textContent = '(' + teamNames.length + ')';
+
+      const body = section.querySelector('#team-section-body');
+      // Clear existing rows but preserve teammate-card subtrees (they hold session DOM via sessionCards cache).
+      // We rebuild the row scaffolding each call; teammate cards re-attached afterwards.
+      body.innerHTML = '';
+      teamNames.sort((a, b) => a.localeCompare(b));
+      for (const teamName of teamNames) {
+        const team = teamsMap()[teamName];
+        const lifecycle = deriveTeamLifecycle(team);
+        const accentH = hashIdx(teamName, 360);
+        const members = teamMembersOf(team);
+        // Per TEAMS_DESIGN.md §8c: TEAMS payload carries tasks_summary (counts only),
+        // not full task bodies. Fall back to deriving from a `tasks` map if architect's
+        // older v0 schema is still in flight (defensive — both shapes accepted).
+        let taskTotals;
+        if (team && team.tasks_summary) {
+          taskTotals = {
+            total: team.tasks_summary.total || 0,
+            pending: team.tasks_summary.pending || 0,
+            in_progress: team.tasks_summary.in_progress || 0,
+            completed: team.tasks_summary.completed || 0,
+          };
+        } else if (team && team.tasks) {
+          // Architect v2 ships tasks as Array<TeamTaskFull>; older shape was Record<id, Task>.
+          // Object.values() handles both shapes, returning the same values either way.
+          const taskList = Array.isArray(team.tasks) ? team.tasks : Object.values(team.tasks);
+          taskTotals = taskList.reduce((acc, t) => {
+            if (!t || !t.status) return acc;
+            acc[t.status] = (acc[t.status] || 0) + 1;
+            acc.total++;
+            return acc;
+          }, { total: 0, pending: 0, in_progress: 0, completed: 0 });
+        } else {
+          taskTotals = { total: 0, pending: 0, in_progress: 0, completed: 0 };
+        }
+        let teamCost = 0;
+        const memberCosts = [];
+        for (const m of members) {
+          const c = aggregateMateCost(m);
+          memberCosts.push({ name: m.name, cost: c.cost, charIdx: hashIdx(m.name + teamName, 6) });
+          teamCost += c.cost;
+        }
+        // anyLinked: at least one member has a sessionId resolvable to SESSION_USAGE.
+        // Without it, "$0" is misleading — it reads as "spent zero" instead of "data
+        // unavailable". Render em-dash for the latter (per ux-designer §8c nit 2).
+        const anyLinked = members.some(m => {
+          const sids = memberSessionIds(m);
+          return sids.some(sid => SESSION_USAGE[sid]);
+        });
+        const expanded = state.teamsExpanded[teamName] !== false; // default open
+
+        const row = document.createElement('div');
+        row.className = 'team-row lifecycle-' + lifecycle + (expanded ? '' : ' collapsed');
+        row.style.setProperty('--team-accent-h', String(accentH));
+        row.dataset.teamId = teamName;
+
+        // Build header
+        const activePanel = state.teamsActivePanel[teamName] || null;
+        row.innerHTML =
+          '<div class="team-row-header">' +
+            '<span class="team-row-toggle">▼</span>' +
+            '<span class="team-row-name">' + escapeHtml(teamName) + '</span>' +
+            '<span class="team-row-mates-count">' + members.length + ' mates</span>' +
+            '<span class="team-row-cost" title="' + (anyLinked ? 'team aggregate cost from SESSION_USAGE' : 'no member sessions linked — cost data unavailable') + '">' + (anyLinked ? (teamCost > 0 ? fmtCost(teamCost) : '$0') : '—') + '</span>' +
+          '</div>' +
+          '<div class="team-row-body">' +
+            '<div class="team-row-meta">' +
+              '<span class="team-row-meta-item">lifecycle: <b>' + lifecycle + '</b></span>' +
+              '<span class="team-row-meta-item">tasks: ' + taskTotals.completed + '/' + taskTotals.total + '</span>' +
+              (team.lastUpdated ? '<span class="team-row-meta-item">synced ' + timeAgo(team.lastUpdated) + ' ago</span>' : '') +
+            '</div>' +
+            buildCostBarHtml(memberCosts, teamCost, accentH) +
+            '<div class="team-row-mates" data-team-id="' + escapeHtml(teamName) + '"></div>' +
+            '<div class="team-row-actions">' +
+              '<button data-panel="tasks" class="' + (activePanel === 'tasks' ? 'active' : '') + '">📋 view tasks (' + taskTotals.total + ')</button>' +
+              '<button data-panel="mailbox" class="' + (activePanel === 'mailbox' ? 'active' : '') + '">✉ open mailbox</button>' +
+            '</div>' +
+            (activePanel === 'tasks' ? buildTasksPanelHtml(teamName, taskTotals, (team && Array.isArray(team.tasks) ? team.tasks : (team && team.tasks ? Object.values(team.tasks) : []))) : '') +
+            (activePanel === 'mailbox' ? buildMailboxPanelHtml(teamName, members) : '') +
+          '</div>';
+        body.appendChild(row);
+
+        // Attach teammate cards into the .team-row-mates container.
+        const matesContainer = row.querySelector('.team-row-mates');
+        for (const m of members) {
+          const wrapper = renderTeamMateCard(teamName, m, accentH);
+          matesContainer.appendChild(wrapper);
+        }
+
+        // Header click → toggle expand AND focus this team's ribbons (toggle off on second click).
+        row.querySelector('.team-row-header').addEventListener('click', (ev) => {
+          if (ev.target.closest('.team-row-actions')) return;
+          state.teamsExpanded[teamName] = !(state.teamsExpanded[teamName] !== false);
+          // Ribbon focus: same click toggles it. Second click on the same row clears focus.
+          state.teamRibbonFocus = (state.teamRibbonFocus === teamName) ? null : teamName;
+          vscode.setState(state);
+          row.classList.toggle('collapsed', state.teamsExpanded[teamName] === false);
+          renderTeamRibbons();
+        });
+        // Action buttons → toggle mailbox/tasks panels
+        row.querySelectorAll('.team-row-actions button').forEach(btn => {
+          btn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const want = btn.dataset.panel;
+            const cur = state.teamsActivePanel[teamName] || null;
+            state.teamsActivePanel[teamName] = (cur === want) ? null : want;
+            vscode.setState(state);
+            renderTeamsSection();   // re-render this section to mount/unmount panel
+            wireMailboxNodeClicks(); // re-wire if mailbox just appeared
+          });
+        });
+      }
+      // Also wire any newly mounted mailbox nodes after the full re-render
+      wireMailboxNodeClicks();
+    }
+
+    /** Render a teammate's mini session card inside a team-mate-card wrapper.
+     *  Builds a fresh DOM subtree from sessionMeta + SESSION_USAGE — does not
+     *  share DOM with renderSidebar's sessionCards cache (which excludes team-
+     *  member sids). Each team-mate wrapper is its own standalone tree per §3.1. */
+    function renderTeamMateCard(teamName, member, accentH) {
+      const key = teamName + '::' + member.name;
+      let wrapper = teamCardsByMate.get(key);
+      if (!wrapper) {
+        wrapper = document.createElement('div');
+        wrapper.className = 'team-mate-card';
+        wrapper.dataset.team = teamName;
+        wrapper.dataset.mate = member.name;
+        // Reply button (built once, persists across re-renders)
+        const replyBtn = document.createElement('div');
+        replyBtn.className = 'team-mate-reply-btn';
+        replyBtn.textContent = '✉';
+        replyBtn.title = 'Reply to ' + member.name;
+        replyBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          openReplyComposer(teamName, member.name);
+        });
+        wrapper.appendChild(replyBtn);
+        teamCardsByMate.set(key, wrapper);
+      }
+      // Outstanding-prompt class (drives the orange pulse)
+      wrapper.classList.toggle('has-outstanding-prompt', mateHasOutstandingPrompt(member, teamName));
+
+      // Identify the freshest live session for this teammate
+      const sids = memberSessionIds(member);
+      let chosenSid = null;
+      let chosenMeta = null;
+      let chosenLastTs = 0;
+      for (const sid of sids) {
+        const meta = sessionMeta.get(sid);
+        if (!meta) continue;
+        if ((meta.lastTs || 0) >= chosenLastTs) { chosenSid = sid; chosenMeta = meta; chosenLastTs = meta.lastTs; }
+      }
+
+      // Build / refresh the inner card. Signature-based skip avoids restarting
+      // sprite animations every render.
+      const charIdx = chosenMeta ? (chosenMeta.charIdx || 0) : hashIdx(member.name + teamName, 6);
+      const stateCls = chosenMeta && chosenMeta.busy ? 'busy'
+                     : chosenMeta && chosenMeta.waiting ? 'waiting'
+                     : chosenMeta && chosenMeta.monitoring ? 'monitoring'
+                     : 'idle';
+      const ago = chosenLastTs ? timeAgo(chosenLastTs) : '';
+      const status = chosenMeta
+        ? (chosenMeta.busy ? (chosenMeta.lastTool || 'working') + '…'
+          : chosenMeta.waiting ? 'waiting for input'
+          : chosenMeta.monitoring ? 'monitoring bg shell…'
+          : (ago ? 'idle · ' + ago + ' ago' : 'idle'))
+        : 'no sessions linked';
+      const cost = aggregateMateCost(member);
+      const costBadge = cost.cost > 0
+        ? fmtCost(cost.cost) + ' · ' + fmtTok(cost.tokens) + ' tok'
+        : '';
+      const sig = [chosenSid || '-', stateCls, status, costBadge, member.name].join('|');
+
+      let inner = wrapper.querySelector('.team-mate-inner');
+      if (!inner) {
+        inner = document.createElement('div');
+        inner.className = 'team-mate-inner session ' + stateCls;
+        // Keep ✉ button on top — append inner BEFORE we append additional elements
+        wrapper.insertBefore(inner, wrapper.firstChild);
+      }
+      if (inner.dataset.sig !== sig) {
+        inner.className = 'team-mate-inner session ' + stateCls;
+        const m = getManifest(charIdx);
+        const spriteUrl = SPRITES[charIdx] || '';
+        const _spriteVars =
+          '--sprite-url:url(&quot;' + spriteUrl + '&quot;);' +
+          '--sheet-w:' + m.sheet.width + 'px;' +
+          '--sheet-h:' + m.sheet.height + 'px;' +
+          '--cell-w:' + m.cell.width + 'px;' +
+          '--cell-h:' + m.cell.height + 'px;' +
+          '--display-w:' + (m.displayCell?.width || m.cell.width) + 'px;' +
+          '--display-h:' + (m.displayCell?.height || m.cell.height) + 'px;';
+        const pixelCls = stateCls === 'idle' ? '' : stateCls;
+        inner.innerHTML =
+          '<div class="avatar avatar-host ' + stateCls + '">' +
+            '<div class="room-char sidebar-char" style="' + _spriteVars + '">' +
+              '<div class="pixel ' + pixelCls + '"></div>' +
+              '<div class="desk-item"></div>' +
+              '<div class="char-badge"></div>' +
+            '</div>' +
+            '<div class="char-idx" title="char roster id">#' + charIdx + '</div>' +
+          '</div>' +
+          '<div class="info">' +
+            '<div class="title">' + escapeHtml(member.name) + '</div>' +
+            '<div class="subtitle">' + (chosenSid ? escapeHtml(chosenSid.slice(0, 8)) + ' · ' : '') + '<span style="opacity:0.7">' + escapeHtml(member.agentType || 'teammate') + '</span></div>' +
+            '<div class="status-line"><span class="dot"></span><span class="status-txt">' + escapeHtml(status) + '</span></div>' +
+            (costBadge ? '<div class="cost-badge" title="cost · tokens">' + costBadge + '</div>' : '') +
+          '</div>';
+        // Click → focus the underlying session in the timeline
+        if (chosenSid) {
+          inner.style.cursor = 'pointer';
+          inner.onclick = (ev) => {
+            ev.stopPropagation();
+            state.selected = chosenSid;
+            vscode.setState(state);
+            renderTimeline();
+          };
+        } else {
+          inner.style.cursor = 'default';
+          inner.onclick = null;
+        }
+        inner.dataset.sig = sig;
+      }
+
+      // Refresh state overlay (working / idle) — separate child subtree per §3.1.
+      // shutdown_pending dropped per TEAMS_DESIGN.md §8c (not in canonical lifecycle).
+      const ms = deriveMateState(member);
+      let overlay = wrapper.querySelector('.team-mate-state-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.className = 'team-mate-state-overlay';
+        wrapper.appendChild(overlay);
+      }
+      const desiredHtml = ms.state === 'working'
+        ? '<div class="team-mate-working"><span class="twm-pulse-dot"></span><span>' + (ms.meta && ms.meta.lastTool ? escapeHtml(ms.meta.lastTool) : 'working') + '</span></div>'
+        : '<div class="team-mate-idle"><span class="twm-idle-clock">💤</span><span>idle' + (ms.meta && ms.meta.lastTs ? ' ' + timeAgo(ms.meta.lastTs) : '') + '</span></div>';
+      const overlaySig = ms.state + ':' + (ms.meta && ms.meta.lastTs ? Math.floor(ms.meta.lastTs / 60_000) : 0);
+      if (overlay.dataset.signature !== overlaySig) {
+        overlay.innerHTML = desiredHtml;
+        overlay.dataset.signature = overlaySig;
+      }
+      return wrapper;
+    }
+
+    /** Build the per-team stacked cost bar — one segment per teammate, width
+     *  proportional to their share of team cost. */
+    function buildCostBarHtml(memberCosts, teamCost, accentH) {
+      if (teamCost <= 0) return '';
+      const segs = memberCosts.filter(m => m.cost > 0).map(m => {
+        const pct = (m.cost / teamCost) * 100;
+        const hue = (accentH + (m.charIdx * 40)) % 360;
+        const title = m.name + ': ' + fmtCost(m.cost) + ' (' + pct.toFixed(1) + '%)';
+        return '<div class="team-cost-bar-segment" style="width:' + pct.toFixed(2) + '%;background:hsl(' + hue + ', 60%, 50%);" title="' + escapeHtml(title) + '"></div>';
+      }).join('');
+      if (!segs) return '';
+      return '<div class="team-cost-bar">' + segs + '</div>';
+    }
+
+    /** Build a kanban tasks panel HTML for a team — three columns. */
+    /** Build the tasks panel — kanban with summary chip strip on top.
+     *  Per architect schema delta v2 (2026-04-30): TEAMS.teams[name] now carries
+     *  BOTH `tasks: TeamTaskFull[]` (array, full bodies for kanban) AND
+     *  `tasks_summary: {total, completed, in_progress, pending}` (counts).
+     *  Renders summary chips first, then 3-column kanban with blockedBy pills. */
+    function buildTasksPanelHtml(teamName, summary, tasks) {
+      const s = summary || { total: 0, completed: 0, in_progress: 0, pending: 0 };
+      const total = s.total || 0;
+      const done = s.completed || 0;
+      const inProgress = s.in_progress || 0;
+      const pending = s.pending || 0;
+      const seg = (count, color, label) => {
+        if (!count) return '';
+        const pct = total > 0 ? (count / total * 100) : 0;
+        return '<div class="ttsum-seg" style="width:' + pct.toFixed(2) + '%;background:' + color + '" title="' + label + ': ' + count + '"></div>';
+      };
+      const bar = total > 0
+        ? '<div class="ttsum-bar">' +
+            seg(done,       '#6affb4', 'completed') +
+            seg(inProgress, '#569CD6', 'in progress') +
+            seg(pending,    '#F48771', 'pending') +
+          '</div>'
+        : '<div class="ttsum-bar ttsum-empty"></div>';
+
+      // Kanban columns — only render if `tasks` array (full bodies) is available.
+      const taskList = Array.isArray(tasks) ? tasks : [];
+      let kanbanHtml = '';
+      if (taskList.length > 0) {
+        const cols = { pending: [], in_progress: [], completed: [] };
+        for (const t of taskList) {
+          if (!t || !t.status) continue;
+          if (cols[t.status]) cols[t.status].push(t);
+        }
+        const byUpdated = (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+        cols.pending.sort(byUpdated); cols.in_progress.sort(byUpdated); cols.completed.sort(byUpdated);
+        const renderCol = (status, label, emoji) => {
+          const list = cols[status];
+          const cards = list.map(t => {
+            const blockers = (t.blockedBy || []).map(bid => {
+              const b = taskList.find(x => x && x.id === bid);
+              const blockerDone = b && b.status === 'completed';
+              return '<span class="ttc-blocked-pill ' + (blockerDone ? 'done' : '') + '">#' + escapeHtml(String(bid)) + (blockerDone ? ' ✓' : '') + '</span>';
+            }).join('');
+            const ageMs = t.updatedAt ? (Date.now() - t.updatedAt) : 0;
+            const owner = t.owner ? escapeHtml(t.owner) : '—';
+            return '<div class="team-task-card" data-status="' + status + '" data-task-id="' + escapeHtml(String(t.id || '')) + '" title="' + escapeHtml(t.subject || '') + '">' +
+              '<span class="ttc-subject">#' + escapeHtml(String(t.id || '?')) + ' ' + escapeHtml(t.subject || '(untitled)') + '</span>' +
+              '<span class="ttc-meta">👤 ' + owner + (ageMs > 0 ? ' · ' + timeAgo(t.updatedAt) + ' ago' : '') + '</span>' +
+              (blockers ? '<span class="ttc-blocked">⛓ blocked by ' + blockers + '</span>' : '') +
+            '</div>';
+          }).join('');
+          return '<div class="team-task-col" data-status="' + status + '">' +
+            '<div class="team-task-col-header"><span>' + emoji + ' ' + label + '</span><span>' + list.length + '</span></div>' +
+            '<div class="team-task-col-list">' + (cards || '<div style="opacity:0.3;font-size:9px;text-align:center;padding:8px 0">—</div>') + '</div>' +
+          '</div>';
+        };
+        kanbanHtml = '<div class="team-tasks-board">' +
+          renderCol('pending',     'Pending',     '⏳') +
+          renderCol('in_progress', 'In progress', '🔧') +
+          renderCol('completed',   'Completed',   '✅') +
+        '</div>';
+      }
+
+      const tasksDir = '~/.claude/tasks/' + teamName + '/';
+      return '<div class="team-tasks-panel">' +
+        '<div class="team-tasks-panel-header">📋 Tasks for <b>' + escapeHtml(teamName) + '</b> · ' + total + ' total</div>' +
+        '<div class="ttsum-chips">' +
+          '<span class="ttsum-chip ttsum-completed">✅ ' + done + '<span class="ttsum-label">done</span></span>' +
+          '<span class="ttsum-chip ttsum-in-progress">🔧 ' + inProgress + '<span class="ttsum-label">in progress</span></span>' +
+          '<span class="ttsum-chip ttsum-pending">⏳ ' + pending + '<span class="ttsum-label">pending</span></span>' +
+        '</div>' +
+        bar +
+        kanbanHtml +
+        (kanbanHtml ? '' :
+          '<div class="ttsum-hint">' +
+            '<span class="ttsum-hint-label">details:</span> ' +
+            '<code class="ttsum-path" data-path="' + escapeHtml(tasksDir) + '" title="copy path">' + escapeHtml(tasksDir) + '</code>' +
+          '</div>'
+        ) +
+      '</div>';
+    }
+
+    /** Build the mailbox panel HTML — SVG directed graph (zero-dep).
+     *  Architect's TEAMS payload doesn't yet carry message data (v1.1), so we
+     *  fall back to a "presence graph": nodes = teammates, edges = subagent
+     *  parent→child links from sessionMeta. Degrades gracefully. */
+    function buildMailboxPanelHtml(teamName, members) {
+      if (!members || members.length === 0) {
+        return '<div class="team-mailbox-panel"><div class="team-mailbox-empty">no teammates yet</div></div>';
+      }
+      // Polar layout — pentagon for 5, hexagon for 6, circle for any N
+      const cx = 150, cy = 100, r = 70;
+      const N = members.length;
+      const positions = members.map((m, i) => {
+        const angle = (i / Math.max(1, N)) * Math.PI * 2 - Math.PI / 2;
+        return { name: m.name, x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle), idx: i };
+      });
+
+      // Edges: prefer real messages from TEAMS.messages (architect v2 ring buffer);
+      // fall back to subagent parent→child relationships when no messages yet.
+      const edges = [];
+      const messages = (TEAMS && TEAMS.messages && TEAMS.messages[teamName]) || [];
+      if (messages.length > 0) {
+        // Bucket by (from→to) for line thickness; carry latest ts for opacity/recent.
+        const byPair = new Map();
+        for (const msg of messages) {
+          if (!msg || !msg.from || !msg.to) continue;
+          const key = msg.from + '||' + msg.to;
+          const cur = byPair.get(key) || { from: msg.from, to: msg.to, ts: 0, count: 0 };
+          cur.count++;
+          if ((msg.ts || 0) > cur.ts) cur.ts = msg.ts || 0;
+          byPair.set(key, cur);
+        }
+        for (const e of byPair.values()) edges.push(e);
+      } else {
+        // Presence fallback: derive from subagent parent→child links
+        for (const m of members) {
+          const sids = memberSessionIds(m);
+          for (const sid of sids) {
+            const meta = sessionMeta.get(sid);
+            if (!meta || !meta.parentSessionId) continue;
+            for (const m2 of members) {
+              const sids2 = memberSessionIds(m2);
+              if (sids2.includes(meta.parentSessionId) && m2.name !== m.name) {
+                edges.push({ from: m2.name, to: m.name, ts: meta.lastTs || 0, count: 1 });
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      const nodesSvg = positions.map((p, i) => {
+        return '<g class="team-mailbox-node" data-mate="' + escapeHtml(p.name) + '">' +
+          '<circle cx="' + p.x + '" cy="' + p.y + '" r="8"></circle>' +
+          '<text x="' + p.x + '" y="' + (p.y + 22) + '">' + escapeHtml(p.name) + '</text>' +
+        '</g>';
+      }).join('');
+
+      const edgesSvg = edges.map(e => {
+        const a = positions.find(p => p.name === e.from);
+        const b = positions.find(p => p.name === e.to);
+        if (!a || !b) return '';
+        const ageMs = Date.now() - e.ts;
+        const opacity = Math.max(0.15, 1 - ageMs / 1_800_000);  // fade over 30min
+        const recentCls = ageMs < 5 * 60 * 1000 ? ' recent' : '';
+        const width = Math.max(1, Math.min(6, Math.log2(e.count + 1) * 1.5));
+        // Curve slightly so reciprocal edges don't overlap
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const nx = -dy * 0.15, ny = dx * 0.15;
+        return '<path class="team-mailbox-edge' + recentCls + '" ' +
+          'd="M' + a.x + ',' + a.y + ' Q' + (mx + nx) + ',' + (my + ny) + ' ' + b.x + ',' + b.y + '" ' +
+          'stroke="hsl(' + hashIdx(e.from, 360) + ', 65%, 60%)" ' +
+          'stroke-width="' + width + '" ' +
+          'opacity="' + opacity.toFixed(2) + '" ' +
+          'marker-end="url(#mb-arrow-' + escapeHtml(teamName) + ')"></path>';
+      }).join('');
+
+      const arrowId = 'mb-arrow-' + escapeHtml(teamName);
+      const empty = (positions.length === 0) ? '<div class="team-mailbox-empty">no teammates yet</div>' : '';
+      const noEdges = (edges.length === 0 && positions.length > 0)
+        ? '<div style="font-size:10px;opacity:0.5;text-align:center;margin-top:6px">no message data yet — showing presence only</div>'
+        : '';
+      return '<div class="team-mailbox-panel">' +
+        '<div class="team-mailbox-panel-header">✉ Mailbox · <b>' + escapeHtml(teamName) + '</b> · ' + members.length + ' nodes · ' + edges.length + ' edges</div>' +
+        empty +
+        (positions.length > 0
+          ? '<svg class="team-mailbox-svg" viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">' +
+              '<defs><marker id="' + arrowId + '" viewBox="0 -5 10 10" refX="14" refY="0" markerWidth="6" markerHeight="6" orient="auto">' +
+                '<path d="M0,-3L8,0L0,3" fill="rgba(220,220,170,0.55)"/></marker></defs>' +
+              edgesSvg +
+              nodesSvg +
+            '</svg>'
+          : '') +
+        noEdges +
+      '</div>';
+    }
+
+    /** Wire mailbox node clicks to open reply composer (delegated since the SVG is
+     *  rebuilt each render). */
+    function wireMailboxNodeClicks() {
+      document.querySelectorAll('.team-mailbox-panel .team-mailbox-node').forEach(node => {
+        if (node.dataset.wired === '1') return;
+        node.dataset.wired = '1';
+        node.style.pointerEvents = 'all';
+        node.addEventListener('click', () => {
+          const mate = node.dataset.mate;
+          const panel = node.closest('.team-row');
+          const team = panel && panel.dataset.teamId;
+          if (mate && team) openReplyComposer(team, mate);
+        });
+      });
+    }
+
+    /** Render team ribbons over the floor plan — SVG arcs binding teammates of
+     *  the same team that landed in different rooms. Per TEAMS_DESIGN §2 / §4.4. */
+    function renderTeamRibbons() {
+      const plan = document.getElementById('floor-plan');
+      if (!plan) return;
+      // One-time wire-up: clicking empty floor-plan area clears the team ribbon focus.
+      // Char/room clicks already stopPropagation in their own handlers, so this only
+      // fires for actual floor-plan background clicks.
+      if (!plan.dataset.teamFocusWired) {
+        plan.dataset.teamFocusWired = '1';
+        plan.addEventListener('click', (ev) => {
+          // Only clear when click is directly on the floor-plan background or rooms,
+          // NOT on a character (data-sid) or ribbon overlay.
+          if (ev.target.closest('[data-sid]')) return;
+          if (state.teamRibbonFocus !== null && state.teamRibbonFocus !== undefined) {
+            state.teamRibbonFocus = null;
+            vscode.setState(state);
+            renderTeamRibbons();
+          }
+        });
+      }
+      const old = plan.querySelector('svg.team-ribbon-layer');
+      if (old) old.remove();
+      const allTeamNames = Object.keys(teamsMap());
+      if (allTeamNames.length === 0) return;
+      // Ribbon-on-select toggle (per ux-designer §8c nit 1): when state.teamRibbonFocus
+      // is set, only that team's arcs render — eliminates spaghetti at 3+ teams.
+      // Click team-row → focus that team; click empty floor-plan → clear focus.
+      const focused = state.teamRibbonFocus;
+      const teamNames = (focused && allTeamNames.includes(focused)) ? [focused] : allTeamNames;
+
+      const planRect = plan.getBoundingClientRect();
+      const planW = plan.scrollWidth, planH = plan.scrollHeight;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'team-ribbon-layer');
+      svg.setAttribute('width', String(planW));
+      svg.setAttribute('height', String(planH));
+      svg.style.cssText = 'position:absolute;left:0;top:0;width:' + planW + 'px;height:' + planH + 'px;pointer-events:none;z-index:2;';
+      let drew = 0;
+      for (const teamName of teamNames) {
+        const team = teamsMap()[teamName];
+        const accentH = hashIdx(teamName, 360);
+        const members = teamMembersOf(team);
+        if (members.length < 2) continue;
+        // Resolve avatar centers
+        const points = [];
+        for (const m of members) {
+          const sids = memberSessionIds(m);
+          for (const sid of sids) {
+            const el = plan.querySelector('[data-sid="' + CSS.escape(sid) + '"]');
+            if (!el) continue;
+            const r = el.getBoundingClientRect();
+            points.push({
+              x: r.left - planRect.left + r.width / 2 + plan.scrollLeft,
+              y: r.top - planRect.top + r.height / 2 + plan.scrollTop,
+            });
+            break;  // one point per teammate, take first found sid
+          }
+        }
+        if (points.length < 2) continue;
+        // Convex hull fallback for ≥5 points (TEAMS_DESIGN §2 tradeoff)
+        const stroke = 'hsl(' + accentH + ', 65%, 55%)';
+        if (points.length >= 5) {
+          const hull = convexHull(points);
+          const d = 'M' + hull.map(p => p.x + ',' + p.y).join(' L') + ' Z';
+          const poly = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          poly.setAttribute('class', 'team-ribbon-hull');
+          poly.setAttribute('d', d);
+          poly.setAttribute('stroke', stroke);
+          poly.setAttribute('fill', stroke);
+          svg.appendChild(poly);
+          drew++;
+        } else {
+          for (let i = 0; i < points.length; i++) {
+            for (let j = i + 1; j < points.length; j++) {
+              const a = points[i], b = points[j];
+              const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 - 30;
+              arc.setAttribute('class', 'team-ribbon-arc');
+              arc.setAttribute('d', 'M' + a.x + ',' + a.y + ' Q' + mx + ',' + my + ' ' + b.x + ',' + b.y);
+              arc.setAttribute('stroke', stroke);
+              svg.appendChild(arc);
+              drew++;
+            }
+          }
+        }
+      }
+      if (drew > 0) {
+        plan.style.position = 'relative';
+        plan.appendChild(svg);
+      }
+    }
+
+    /** Andrew's monotone chain convex hull. Returns counter-clockwise hull vertices. */
+    function convexHull(points) {
+      const pts = points.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+      const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+      const lower = [];
+      for (const p of pts) {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+        lower.push(p);
+      }
+      const upper = [];
+      for (let i = pts.length - 1; i >= 0; i--) {
+        const p = pts[i];
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+        upper.push(p);
+      }
+      lower.pop(); upper.pop();
+      return lower.concat(upper);
+    }
+
+    /** Reply composer entry point — opens modal pre-filled with target. */
+    let _replyContext = { team: null, teammate: null };
+    function openReplyComposer(team, teammate, opts) {
+      _replyContext = { team, teammate };
+      const modal = document.getElementById('reply-modal');
+      if (!modal) return;
+      const target = modal.querySelector('#reply-target');
+      const meta = modal.querySelector('#reply-meta');
+      const text = modal.querySelector('#reply-text');
+      const result = modal.querySelector('#reply-result');
+      const accentH = hashIdx(team || '', 360);
+      modal.querySelector('.modal').style.setProperty('--team-accent', 'hsl(' + accentH + ', 65%, 55%)');
+      target.textContent = teammate || '?';
+      meta.textContent = 'team: ' + (team || '?') + ' · inbox: ~/.agents-viz/inbox/' + (team || '?') + '/' + (teammate || '?') + '/{ts}-{hex}.json';
+      // Prefill: if user is replying to an outstanding question, surface the latest
+      // inbound msg's text_excerpt as a > quoted line so they can see what they're
+      // answering (architect TEAMS.messages[team] ring buffer).
+      let prefill = (opts && opts.prefill) || '';
+      if (!prefill && TEAMS && TEAMS.messages && team && teammate) {
+        const teamMsgs = TEAMS.messages[team] || [];
+        let latest = null;
+        for (const m of teamMsgs) {
+          if (m && m.to === teammate && (!latest || (m.ts || 0) > (latest.ts || 0))) latest = m;
+        }
+        if (latest) {
+          prefill = '> from ' + (latest.from || '?') + ': ' + (latest.text_excerpt || '').replace(/\s+/g, ' ').slice(0, 240) + '\n\n';
+        }
+      }
+      text.value = prefill;
+      result.className = 'reply-result';
+      result.textContent = '';
+      modal.classList.add('open');
+      setTimeout(() => {
+        text.focus();
+        // Place cursor at end so user can type below the quoted prefill
+        text.setSelectionRange(text.value.length, text.value.length);
+      }, 50);
+    }
+    function closeReplyComposer() {
+      const modal = document.getElementById('reply-modal');
+      if (modal) modal.classList.remove('open');
+      _replyContext = { team: null, teammate: null };
+    }
+
+    function renderAll() { materializeTeamAvatars(); renderTeamsSection(); renderSidebar(); renderFloorPlan(); renderTeamRibbons(); renderTimeline(); wireMailboxNodeClicks(); }
+    function renderAllThrottled() { materializeTeamAvatars(); renderTeamsSection(); renderSidebarThrottled(); renderFloorPlan(); renderTeamRibbons(); renderTimeline(); wireMailboxNodeClicks(); }
 
     // Track pagination state to avoid flooding the extension with load-more requests.
     // One request in-flight at a time per session; debounce by recording the last request ts.
@@ -3557,6 +4965,40 @@
         PROMPT_COSTS.length = 0;
         for (const p of (msg.promptCosts || [])) PROMPT_COSTS.push(p);
         if (typeof updateCostboard === 'function') updateCostboard();
+      } else if (msg.type === 'teams-update') {
+        // Architect's TS data layer pushes the full TEAMS state on every debounced
+        // refresh (~ sub-2s after a hook fires). Replace + re-render.
+        const incoming = msg.teams || {};
+        // mutate TEAMS in place (it's a const reference) so other modules holding refs see updates
+        for (const k of Object.keys(TEAMS)) delete TEAMS[k];
+        for (const k of Object.keys(incoming)) TEAMS[k] = incoming[k];
+        renderAll();
+      } else if (msg.type === 'inbox-pending') {
+        // fs.watch on ~/.agents-viz/inbox/{team}/{teammate}/ → debounced count update.
+        // Apply to TEAMS in place so renderTeamsSection picks it up via mateHasOutstandingPrompt.
+        if (msg.team && msg.teammate && typeof msg.count === 'number') {
+          const team = teamsMap()[msg.team];
+          if (team) {
+            if (!team.pending_inbox) team.pending_inbox = {};
+            if (msg.count > 0) team.pending_inbox[msg.teammate] = msg.count;
+            else delete team.pending_inbox[msg.teammate];
+            renderTeamsSection();
+          }
+        }
+      } else if (msg.type === 'team_reply_result') {
+        // Response from extension.ts after writing the inbox file. Show success/error.
+        const result = document.getElementById('reply-result');
+        if (result) {
+          if (msg.ok) {
+            result.className = 'reply-result success';
+            result.textContent = '✓ delivered to ' + (msg.path || '~/.agents-viz/inbox/?');
+            // Auto-close after 1.5s
+            setTimeout(() => closeReplyComposer(), 1500);
+          } else {
+            result.className = 'reply-result error';
+            result.textContent = '✕ ' + (msg.error || 'send failed');
+          }
+        }
       } else if (msg.type === 'history-chunk') {
         paginationState.loading = false;
         const sid = msg.session_id;
@@ -3845,23 +5287,23 @@
       const { buckets, metrics } = seriesData;
       const xAxisData = buckets.map(ts => new Date(ts).toISOString());
       const PANELS = [
-        { key: 'ttfw',          label: 'TTFW (s)',            unit: 's' },
-        { key: 'turn',          label: 'Turn latency (s)',    unit: 's' },
-        { key: 'toolDur',       label: 'Tool duration (s)',   unit: 's' },
-        { key: 'tokensPerTurn', label: 'Tokens / turn',       unit: 'tok' },
-        { key: 'toolsPerTurn',  label: 'Tools / turn',        unit: '' },
-        { key: 'costPerTurn',   label: 'Cost / turn ($)',     unit: '$' },
-        { key: 'waitTime',      label: 'Wait time (s)',       unit: 's' },
-        { key: 'cacheHitRate',  label: 'Cache hit (%)',       unit: '%' },
+        { key: 'ttfw',          label: 'TTFW',         unit: 's' },
+        { key: 'turn',          label: 'Turn latency', unit: 's' },
+        { key: 'toolDur',       label: 'Tool duration',unit: 's' },
+        { key: 'tokensPerTurn', label: 'Tokens / turn',unit: '' },
+        { key: 'toolsPerTurn',  label: 'Tools / turn', unit: '' },
+        { key: 'costPerTurn',   label: 'Cost / turn',  unit: '$' },
+        { key: 'waitTime',      label: 'Wait time',    unit: 's' },
+        { key: 'cacheHitRate',  label: 'Cache hit',    unit: '%' },
       ];
       const COLS = 4;
       const titles = [], grids = [], xAxes = [], yAxes = [], series = [];
       // Layout: 8 panels in a 4×2 grid, each with a title above. Vertical gap
       // between rows must clear row-1 x-axis labels + row-2 title.
-      const TOP = 6, BOTTOM = 16, GAP_X = 3, GAP_Y = 14;       // % of plot area
-      const TITLE_H = 4;                                       // % reserved for each panel title
+      const TOP = 4, BOTTOM = 16, GAP_X = 3, GAP_Y = 12;       // % of plot area
+      const TITLE_H = 7;                                       // % reserved for each panel title (clears y-axis topmost tick)
       const panelW = (100 - GAP_X * (COLS + 1)) / COLS;
-      const panelH = (100 - TOP - BOTTOM - GAP_Y) / 2 - TITLE_H;
+      const panelH = (100 - TOP - BOTTOM - GAP_Y - 2 * TITLE_H) / 2;
       PANELS.forEach((p, i) => {
         const col = i % COLS, row = Math.floor(i / COLS);
         const left = GAP_X + col * (panelW + GAP_X);
@@ -3869,8 +5311,9 @@
         const gridTop = titleTop + TITLE_H;
         titles.push({
           text: p.label,
-          left: left + '%', top: titleTop + '%',
-          textStyle: { fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: 'normal' },
+          left: (left + panelW / 2) + '%', top: titleTop + '%',
+          textAlign: 'center',
+          textStyle: { fontSize: 10, color: 'rgba(255,255,255,0.78)', fontWeight: 'normal' },
         });
         grids.push({
           left: left + '%', top: gridTop + '%',
@@ -4047,7 +5490,7 @@
         if (!card || !filterInput) return;
         const sid = card.dataset.sid;
         const meta = sid ? sessionMeta.get(sid) : null;
-        const title = meta?.title || sid?.slice(0, 8) || '';
+        const title = (meta && sid) ? displayNameFor(sid, meta) : (sid?.slice(0, 8) || '');
         if (title && state.speedOpen) {
           filterInput.value = title;
           speedDash.filter = title;
@@ -4077,7 +5520,7 @@
 
     function openDeleteModal(sid) {
       const meta = sessionMeta.get(sid) || {};
-      const title = meta.title || sessionProject(meta);
+      const title = displayNameFor(sid, meta);
       const events = bySession.get(sid) || [];
       // Find last UserPromptSubmit and last PreToolUse
       let lastPrompt = null, lastTool = null;
@@ -4135,6 +5578,40 @@
       vscode.postMessage({ type: 'delete-session', session_id: sid, alsoDeleteFile: alsoFile });
       closeDeleteModal();
       renderAll();
+    });
+
+    // --- Reply composer modal ---
+    const replyModal = document.getElementById('reply-modal');
+    const replyCancelBtn = document.getElementById('reply-cancel');
+    const replySendBtn = document.getElementById('reply-send');
+    const replyTextEl = document.getElementById('reply-text');
+    if (replyCancelBtn) replyCancelBtn.addEventListener('click', closeReplyComposer);
+    if (replyModal) replyModal.addEventListener('click', (e) => { if (e.target === replyModal) closeReplyComposer(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && replyModal && replyModal.classList.contains('open')) closeReplyComposer();
+    });
+    if (replySendBtn) replySendBtn.addEventListener('click', () => {
+      const text = (replyTextEl && replyTextEl.value || '').trim();
+      const result = document.getElementById('reply-result');
+      if (!text) {
+        if (result) { result.className = 'reply-result error'; result.textContent = '✕ message empty'; }
+        return;
+      }
+      if (!_replyContext.team || !_replyContext.teammate) {
+        if (result) { result.className = 'reply-result error'; result.textContent = '✕ no target selected'; }
+        return;
+      }
+      const kindEl = document.querySelector('#reply-modal input[name="reply-kind"]:checked');
+      const kind = (kindEl && kindEl.value) || 'request';
+      vscode.postMessage({
+        type: 'team_reply',
+        team: _replyContext.team,
+        teammate: _replyContext.teammate,
+        text,
+        kind,
+      });
+      if (result) { result.className = 'reply-result'; result.textContent = '… sending'; }
+      // Wait for team_reply_result message to confirm or surface error.
     });
 
     document.querySelectorAll('#filter-bar input[type=checkbox]').forEach(cb => {

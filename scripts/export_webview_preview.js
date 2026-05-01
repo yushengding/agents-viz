@@ -59,6 +59,89 @@ html = html.replace(/__PROMPT_COSTS__/g, JSON.stringify([
     { sessionId: 'bbbb2222', promptText: 'backtest VIX>30 entry with SPXL', promptTs: _previewNow - 2000, cost: 0.31, tokens: 12000, cwd: '~/projects/example_trading' },
     { sessionId: 'cccc3333', promptText: 'add pixel character avatars to the sidebar', promptTs: _previewNow - 3000, cost: 0.08, tokens: 4000, cwd: '~/projects/agents-viz' },
 ]));
+// Synthetic TEAMS fixture per architect TEAMS_DECISIONS §1 + schema delta v2.
+// Top-level shape is `{version, teams: Record<name, TeamEntry>, messages: Record<name, []>}`.
+// Three teams with different lifecycle states + member overlap with sidebar sessions.
+html = html.replace(/__TEAMS__/g, JSON.stringify({
+    version: 2,
+    teams: {
+    'agents-viz-teams': {
+        config: {
+            team: 'agents-viz-teams',
+            members: [
+                { name: 'ux-designer',  agentId: 'a1', agentType: 'claude-opus-4-7', sessionIds: ['bb0002'] },
+                { name: 'architect',    agentId: 'a2', agentType: 'claude-opus-4-7', sessionIds: ['bbbb2222'] },
+                { name: 'frontend',     agentId: 'a3', agentType: 'claude-opus-4-7', sessionIds: ['cccc3333'] },
+                { name: 'hooks-devops', agentId: 'a4', agentType: 'claude-opus-4-7', sessionIds: ['dddd4444'] },
+                { name: 'qa-cold-audit',agentId: 'a5', agentType: 'claude-opus-4-7', sessionIds: ['eeee5555'] },
+            ],
+            spawnPrompt: 'Build agents-viz teams visualization',
+            createdAt: _previewNow - 3_600_000,
+        },
+        // Schema v2 (2026-04-30): tasks is Array<TeamTaskFull>; tasks_summary + pending_inbox added.
+        tasks: [
+            { id: '1', subject: 'UI/UX visual design doc',         status: 'completed',   owner: 'ux-designer',   updatedAt: _previewNow - 1_800_000, createdAt: _previewNow - 3_500_000 },
+            { id: '2', subject: 'Extension architect TS data',     status: 'in_progress', owner: 'architect',     updatedAt: _previewNow - 60_000,    createdAt: _previewNow - 3_400_000 },
+            { id: '3', subject: 'Frontend webview teams viz',      status: 'in_progress', owner: 'frontend',      updatedAt: _previewNow - 5_000,     createdAt: _previewNow - 3_300_000, blockedBy: ['1'] },
+            { id: '4', subject: 'Inbox + UserPromptSubmit hook',   status: 'completed',   owner: 'hooks-devops',  updatedAt: _previewNow - 600_000,   createdAt: _previewNow - 3_200_000 },
+            { id: '5', subject: 'Persistence + lifecycle ADR',     status: 'completed',   owner: 'product-lead',  updatedAt: _previewNow - 900_000,   createdAt: _previewNow - 3_100_000 },
+            { id: '6', subject: 'QA cold-audit end-to-end',        status: 'pending',     owner: 'qa-cold-audit', updatedAt: _previewNow - 120_000,   createdAt: _previewNow - 3_000_000, blockedBy: ['2', '3', '4'] },
+        ],
+        tasks_summary: { total: 6, completed: 3, in_progress: 2, pending: 1 },
+        pending_inbox: { 'architect': 2, 'hooks-devops': 1 },
+        lifecycle_state: 'active',
+        last_active_ts: _previewNow - 5_000,
+        lastUpdated: _previewNow - 1500,
+    },
+    'stickerfort-polish': {
+        config: {
+            team: 'stickerfort-polish',
+            members: [
+                { name: 'godot-dev',     agentId: 'b1', agentType: 'claude-opus-4-7', sessionIds: ['bb0002'] },
+                { name: 'asset-curator', agentId: 'b2', agentType: 'claude-opus-4-7', sessionIds: [] },
+                { name: 'playtester',    agentId: 'b3', agentType: 'claude-opus-4-7', sessionIds: [] },
+            ],
+            createdAt: _previewNow - 4_000_000,
+        },
+        tasks: [
+            { id: '1', subject: 'Polish fusion UI animation', status: 'in_progress', owner: 'godot-dev', updatedAt: _previewNow - 1500, createdAt: _previewNow - 1_800_000 },
+            { id: '2', subject: 'Curate 30 new sticker assets', status: 'pending', owner: 'asset-curator', updatedAt: _previewNow - 2_000_000, createdAt: _previewNow - 2_000_000 },
+        ],
+        tasks_summary: { total: 2, completed: 0, in_progress: 1, pending: 1 },
+        pending_inbox: {},
+        lifecycle_state: 'active',
+        last_active_ts: _previewNow - 1500,
+        lastUpdated: _previewNow - 1500,
+    },
+    'archived-experiment': {
+        config: {
+            team: 'archived-experiment',
+            members: [
+                { name: 'researcher', agentId: 'c1', agentType: 'claude-opus-4-7', sessionIds: [] },
+            ],
+            createdAt: _previewNow - 86_400_000 * 3,
+        },
+        // Empty tasks array (v2 shape — array, not object)
+        tasks: [],
+        tasks_summary: { total: 0, completed: 0, in_progress: 0, pending: 0 },
+        pending_inbox: {},
+        lifecycle_state: 'archived',
+        last_active_ts: _previewNow - 86_400_000 * 2,
+        lastUpdated: _previewNow - 86_400_000 * 2,
+    },
+    },
+    messages: {
+        'agents-viz-teams': [
+            { ts: _previewNow - 60_000,  from: 'frontend',     to: 'architect',    text_excerpt: 'Need fs.watch on inbox dirs + inbox-pending postMessage' },
+            { ts: _previewNow - 30_000,  from: 'architect',    to: 'frontend',     text_excerpt: 'Schema v2 landed; pending_inbox + tasks[] now live' },
+            { ts: _previewNow - 10_000,  from: 'ux-designer',  to: 'frontend',     text_excerpt: 'Three nits in tasks panel screenshot' },
+            { ts: _previewNow - 5_000,   from: 'frontend',     to: 'ux-designer',  text_excerpt: 'All three nits applied + verified' },
+            { ts: _previewNow - 90_000,  from: 'hooks-devops', to: 'architect',    text_excerpt: 'Inbox path locked — per-message file' },
+        ],
+        'stickerfort-polish': [],
+        'archived-experiment': [],
+    },
+}));
 
 const now = Date.now();
 const mkEvt = (sid, cwd, name, extras = {}, dt = 0) => ({

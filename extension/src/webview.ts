@@ -21,6 +21,11 @@ export interface BuildOpts {
         cost: number; tokens: number; cwd?: string;
     }>;
     echartsUri?: string;       // pre-resolved webview URI to bundled echarts.min.js
+    teams?: {
+        version: number;
+        teams: Record<string, any>;       // §1 TeamEntry per team-name (TEAMS_DECISIONS.md)
+        messages: Record<string, any[]>;  // ring buffer per team
+    };
 }
 
 export function buildWebviewHtml(opts: BuildOpts): string {
@@ -44,7 +49,8 @@ export function buildWebviewHtml(opts: BuildOpts): string {
         .replace(/__SOFA_SIDE__/g, opts.sofaSide || '')
         .replace(/__SESSION_USAGE__/g, JSON.stringify(opts.sessionUsage || {}))
         .replace(/__PROMPT_COSTS__/g, JSON.stringify(opts.promptCosts || []))
-        .replace(/__ECHARTS_URI__/g, opts.echartsUri || '');
+        .replace(/__ECHARTS_URI__/g, opts.echartsUri || '')
+        .replace(/__TEAMS__/g, JSON.stringify(opts.teams || {}));
 }
 
 /** Return the absolute path of the webview HTML template so it can be watched. */

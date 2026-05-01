@@ -79,9 +79,74 @@ Notification / SubagentStop / Task / SessionEnd). Each hook uses a silent
 forwarder (sub-5 ms latency, zero token cost) that POSTs the event to a local
 HTTP socket.
 
+If you also use **Claude Code Teams** (Feb 2026 experimental flag
+`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`), the same forwarder picks up three
+team-scoped hooks (`TeammateIdle`, `TaskCreated`, `TaskCompleted`) and
+broadcasts them to every alive panel. They're installed by default — pass
+`--no-team` to `scripts/configure_hooks.js` to skip.
+
 After configuring hooks, **restart all Claude Code sessions** so they pick up
 the new hooks. Historical sessions are loaded by scanning
 `~/.claude/projects/*/<sid>.jsonl` (with on-disk caching).
+
+### Bidirectional reply (file inbox)
+
+Claude Code Teams has no public inbound message-injection API
+([anthropics/claude-code#27441](https://github.com/anthropics/claude-code/issues/27441)).
+Agents Viz ships an `inbox-reader-hook.js` that piggybacks on `UserPromptSubmit`
+and gives you an always-works file-based fallback channel.
+
+The full protocol is locked in [`docs/TEAMS_DECISIONS.md`](docs/TEAMS_DECISIONS.md)
+§4. Quick summary:
+
+Install from the panel command (`Configure Claude Code Hooks`) or via the
+script:
+
+```bash
+node scripts/configure_hooks.js --with-inbox
+```
+
+Then any external tool (the VS Code panel, a script, your own dashboard)
+atomically writes a per-message JSON file at:
+
+```
+~/.agents-viz/inbox/{team-name}/{teammate-name}/{ts}.json
+```
+
+Atomic-write contract: writers must `write(path + '.tmp')` then `rename(.tmp → .json)`.
+The hook only reads `*.json`, so a partially-written file never gets injected.
+
+Message shape:
+
+```json
+{
+  "from":   "user|architect|...",
+  "to":     "{teammate-name}",
+  "ts":     1745000000000,
+  "body":   "the message body",
+  "kind":   "REQUEST|ANSWER|NOTE",
+  "ttl_ms": 300000
+}
+```
+
+On the next user prompt that teammate types, the hook concatenates up to **10
+oldest non-expired messages** (FIFO delivery order), separated by `--- next message ---`,
+prepends them as a system note, and **deletes** the consumed files. Anything
+beyond the 10-message cap stays on disk for the next prompt boundary — no loss.
+
+Messages older than `ttl_ms` (default 5 minutes) are dropped and recorded at
+`~/.agents-viz/inbox/_dropped.log`. The full audit trail of what was actually
+delivered lives in Claude Code's own per-teammate transcript — we don't keep a
+parallel log.
+
+The hook is failure-soft: any error is silently swallowed and the teammate's
+session proceeds with no injection. Hook errors never block work.
+
+To uninstall every agents-viz hook:
+
+```bash
+node scripts/configure_hooks.js --uninstall
+```
 
 ---
 
